@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from app.routers import auth, market, ws, orders, wallet, bots, admin
+from app.routers.ws import _binance_broadcast_cb
 from app.core.redis import get_redis
 from app.services.market_data import market_data_loop
 from app.services.bot_runner import bot_runner_loop
@@ -15,7 +16,8 @@ scheduler = AsyncIOScheduler()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await get_redis()
-    asyncio.create_task(market_data_loop(SUPPORTED_PAIRS))
+    # Pass broadcast callback so Binance updates are pushed to browser clients instantly
+    asyncio.create_task(market_data_loop(SUPPORTED_PAIRS, broadcast_cb=_binance_broadcast_cb))
     asyncio.create_task(bot_runner_loop())
     scheduler.add_job(daily_drawdown_check, "cron", hour=0, minute=0)
     scheduler.add_job(monthly_evaluation, "cron", day="last", hour=23, minute=59)

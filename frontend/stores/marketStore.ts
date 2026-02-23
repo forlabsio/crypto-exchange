@@ -45,11 +45,23 @@ export const useMarketStore = create<MarketStore>((set) => ({
       try {
         const data = JSON.parse(e.data);
         if (data.type === "snapshot") {
+          // Initial full snapshot on connect
           set({
             ticker: data.ticker && data.ticker.last_price ? data.ticker : null,
             orderbook: data.orderbook || { bids: [], asks: [] },
             trades: data.trades || [],
           });
+        } else if (data.type === "ticker" && data.ticker?.last_price) {
+          // Real-time ticker push from Binance miniTicker stream
+          set({ ticker: data.ticker });
+        } else if (data.type === "orderbook" && data.orderbook) {
+          // Real-time orderbook push from Binance depth20 stream (~100ms)
+          set({ orderbook: data.orderbook });
+        } else if (data.type === "trade" && data.trade) {
+          // Real-time individual trade push
+          set((state) => ({
+            trades: [data.trade, ...state.trades].slice(0, 50),
+          }));
         }
       } catch {
         // ignore parse errors
