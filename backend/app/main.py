@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.routers import auth, market, ws, orders, wallet, bots, admin
 from app.core.redis import get_redis
 from app.services.market_data import market_data_loop
+from app.services.bot_runner import bot_runner_loop
 
 SUPPORTED_PAIRS = ["BTC_USDT", "ETH_USDT", "BNB_USDT", "SOL_USDT"]
 
@@ -12,6 +13,7 @@ SUPPORTED_PAIRS = ["BTC_USDT", "ETH_USDT", "BNB_USDT", "SOL_USDT"]
 async def lifespan(app: FastAPI):
     await get_redis()
     asyncio.create_task(market_data_loop(SUPPORTED_PAIRS))
+    asyncio.create_task(bot_runner_loop())
     yield
 
 app = FastAPI(title="CryptoExchange API", lifespan=lifespan)
