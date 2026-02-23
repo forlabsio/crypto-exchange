@@ -9,11 +9,22 @@ const INTERVAL_LABELS: Record<string, string> = {
   "1h": "1시간", "4h": "4시간", "1d": "1일", "1w": "1주",
 };
 
+const INDICATORS = ["MA", "EMA", "BOLL", "SAR", "VOL", "MACD", "RSI", "KDJ", "WR", "DMI", "CCI", "OBV"] as const;
+
 export default function ChartWidget({ pair }: { pair: string }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const [interval, setIntervalState] = useState("1h");
+  const [activeIndicators, setActiveIndicators] = useState<Set<string>>(new Set());
+
+  const toggleIndicator = (name: string) => {
+    setActiveIndicators(prev => {
+      const next = new Set(prev);
+      next.has(name) ? next.delete(name) : next.add(name);
+      return next;
+    });
+  };
 
   const loadData = async (iv: string) => {
     if (!seriesRef.current) return;
@@ -82,12 +93,12 @@ export default function ChartWidget({ pair }: { pair: string }) {
 
   return (
     <div className="flex flex-col h-full">
-      {/* Interval selector */}
+      {/* Interval + Indicator toolbar */}
       <div className="flex items-center gap-1 px-3 py-1.5 border-b flex-shrink-0"
         style={{ borderColor: "var(--border)", background: "var(--bg-secondary)" }}>
         {INTERVALS.map((iv) => (
           <button key={iv} onClick={() => handleIntervalChange(iv)}
-            className="px-2 py-0.5 rounded text-xs transition-colors"
+            className="px-2 py-0.5 rounded text-xs transition-colors cursor-pointer"
             style={{
               color: interval === iv ? "var(--text-primary)" : "var(--text-secondary)",
               background: interval === iv ? "var(--bg-panel)" : "transparent",
@@ -96,6 +107,33 @@ export default function ChartWidget({ pair }: { pair: string }) {
             {INTERVAL_LABELS[iv]}
           </button>
         ))}
+
+        {/* Separator */}
+        <span style={{ borderLeft: "1px solid var(--border)", height: "12px", display: "inline-block", margin: "0 6px" }} />
+
+        {/* Indicator buttons */}
+        {INDICATORS.map((name) => (
+          <button key={name} onClick={() => toggleIndicator(name)}
+            className="px-2 py-0.5 rounded text-xs transition-colors cursor-pointer"
+            style={{
+              color: activeIndicators.has(name) ? "var(--text-primary)" : "var(--text-secondary)",
+              background: activeIndicators.has(name) ? "var(--bg-panel)" : "transparent",
+            }}>
+            {name}
+          </button>
+        ))}
+
+        {/* Eye and dropdown buttons pushed to the right */}
+        <div className="ml-auto flex items-center">
+          <button type="button" className="px-2 py-0.5 text-xs cursor-pointer"
+            style={{ color: "var(--text-secondary)" }}>
+            👁
+          </button>
+          <button type="button" className="px-2 py-0.5 text-xs cursor-pointer"
+            style={{ color: "var(--text-secondary)" }}>
+            ▾
+          </button>
+        </div>
       </div>
       <div ref={containerRef} className="flex-1" />
     </div>
