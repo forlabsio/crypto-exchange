@@ -38,7 +38,7 @@ export default function ChartWidget({ pair }: { pair: string }) {
   const overlaySeriesRef = useRef<Map<string, ISeriesApi<any>[]>>(new Map());
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const subPaneSeriesRef = useRef<Map<string, ISeriesApi<any>[]>>(new Map());
-  const subPaneRef = useRef<Map<string, number>>(new Map());
+  const subPaneRef = useRef<Map<string, { paneIndex(): number }>>(new Map());
 
   const [interval, setIntervalState] = useState("1h");
   const [activeIndicators, setActiveIndicators] = useState<Set<string>>(new Set());
@@ -64,9 +64,9 @@ export default function ChartWidget({ pair }: { pair: string }) {
       subSeries.forEach((s) => { try { chart.removeSeries(s); } catch { /* ignore */ } });
       subPaneSeriesRef.current.delete(key);
     }
-    const paneIndex = subPaneRef.current.get(key);
-    if (paneIndex !== undefined) {
-      try { chart.removePane(paneIndex); } catch { /* ignore */ }
+    const pane = subPaneRef.current.get(key);
+    if (pane !== undefined) {
+      try { chart.removePane(pane.paneIndex()); } catch { /* ignore */ }
       subPaneRef.current.delete(key);
     }
   }, []);
@@ -136,85 +136,77 @@ export default function ChartWidget({ pair }: { pair: string }) {
 
       } else if (key === "VOL") {
         const pane = chart.addPane();
-        const pIdx = pane.paneIndex();
         const s = chart.addSeries(HistogramSeries, {
           priceFormat: { type: "volume" }, priceScaleId: "vol",
           priceLineVisible: false, lastValueVisible: false,
-        }, pIdx);
+        }, pane.paneIndex());
         s.setData(toTS(calcVOL(data)));
         subPaneSeriesRef.current.set("VOL", [s]);
-        subPaneRef.current.set("VOL", pIdx);
+        subPaneRef.current.set("VOL", pane);
 
       } else if (key === "MACD") {
         const { macd, signal, hist } = calcMACD(data);
         const pane = chart.addPane();
-        const pIdx = pane.paneIndex();
-        const histS = chart.addSeries(HistogramSeries, { priceLineVisible: false, lastValueVisible: false }, pIdx);
-        const macdS = chart.addSeries(LineSeries, { color: "#1e90ff", lineWidth: 1, priceLineVisible: false, lastValueVisible: false }, pIdx);
-        const signalS = chart.addSeries(LineSeries, { color: "#ff69b4", lineWidth: 1, priceLineVisible: false, lastValueVisible: false }, pIdx);
+        const histS = chart.addSeries(HistogramSeries, { priceLineVisible: false, lastValueVisible: false }, pane.paneIndex());
+        const macdS = chart.addSeries(LineSeries, { color: "#1e90ff", lineWidth: 1, priceLineVisible: false, lastValueVisible: false }, pane.paneIndex());
+        const signalS = chart.addSeries(LineSeries, { color: "#ff69b4", lineWidth: 1, priceLineVisible: false, lastValueVisible: false }, pane.paneIndex());
         histS.setData(toTS(hist));
         macdS.setData(toTS(macd));
         signalS.setData(toTS(signal));
         subPaneSeriesRef.current.set("MACD", [histS, macdS, signalS]);
-        subPaneRef.current.set("MACD", pIdx);
+        subPaneRef.current.set("MACD", pane);
 
       } else if (key === "RSI") {
         const pane = chart.addPane();
-        const pIdx = pane.paneIndex();
-        const s = chart.addSeries(LineSeries, { color: "#9b59b6", lineWidth: 1, priceLineVisible: false, lastValueVisible: false }, pIdx);
+        const s = chart.addSeries(LineSeries, { color: "#9b59b6", lineWidth: 1, priceLineVisible: false, lastValueVisible: false }, pane.paneIndex());
         s.setData(toTS(calcRSI(data)));
         subPaneSeriesRef.current.set("RSI", [s]);
-        subPaneRef.current.set("RSI", pIdx);
+        subPaneRef.current.set("RSI", pane);
 
       } else if (key === "KDJ") {
         const { k, d, j } = calcKDJ(data);
         const pane = chart.addPane();
-        const pIdx = pane.paneIndex();
-        const kS = chart.addSeries(LineSeries, { color: "#f6a600", lineWidth: 1, priceLineVisible: false, lastValueVisible: false }, pIdx);
-        const dS = chart.addSeries(LineSeries, { color: "#1e90ff", lineWidth: 1, priceLineVisible: false, lastValueVisible: false }, pIdx);
-        const jS = chart.addSeries(LineSeries, { color: "#00bfff", lineWidth: 1, priceLineVisible: false, lastValueVisible: false }, pIdx);
+        const kS = chart.addSeries(LineSeries, { color: "#f6a600", lineWidth: 1, priceLineVisible: false, lastValueVisible: false }, pane.paneIndex());
+        const dS = chart.addSeries(LineSeries, { color: "#1e90ff", lineWidth: 1, priceLineVisible: false, lastValueVisible: false }, pane.paneIndex());
+        const jS = chart.addSeries(LineSeries, { color: "#00bfff", lineWidth: 1, priceLineVisible: false, lastValueVisible: false }, pane.paneIndex());
         kS.setData(toTS(k));
         dS.setData(toTS(d));
         jS.setData(toTS(j));
         subPaneSeriesRef.current.set("KDJ", [kS, dS, jS]);
-        subPaneRef.current.set("KDJ", pIdx);
+        subPaneRef.current.set("KDJ", pane);
 
       } else if (key === "WR") {
         const pane = chart.addPane();
-        const pIdx = pane.paneIndex();
-        const s = chart.addSeries(LineSeries, { color: "#9b59b6", lineWidth: 1, priceLineVisible: false, lastValueVisible: false }, pIdx);
+        const s = chart.addSeries(LineSeries, { color: "#9b59b6", lineWidth: 1, priceLineVisible: false, lastValueVisible: false }, pane.paneIndex());
         s.setData(toTS(calcWR(data)));
         subPaneSeriesRef.current.set("WR", [s]);
-        subPaneRef.current.set("WR", pIdx);
+        subPaneRef.current.set("WR", pane);
 
       } else if (key === "DMI") {
         const { plusDI, minusDI, adx } = calcDMI(data);
         const pane = chart.addPane();
-        const pIdx = pane.paneIndex();
-        const pS = chart.addSeries(LineSeries, { color: "#00ff7f", lineWidth: 1, priceLineVisible: false, lastValueVisible: false }, pIdx);
-        const mS = chart.addSeries(LineSeries, { color: "#ff4444", lineWidth: 1, priceLineVisible: false, lastValueVisible: false }, pIdx);
-        const aS = chart.addSeries(LineSeries, { color: "#f6a600", lineWidth: 1, priceLineVisible: false, lastValueVisible: false }, pIdx);
+        const pS = chart.addSeries(LineSeries, { color: "#00ff7f", lineWidth: 1, priceLineVisible: false, lastValueVisible: false }, pane.paneIndex());
+        const mS = chart.addSeries(LineSeries, { color: "#ff4444", lineWidth: 1, priceLineVisible: false, lastValueVisible: false }, pane.paneIndex());
+        const aS = chart.addSeries(LineSeries, { color: "#f6a600", lineWidth: 1, priceLineVisible: false, lastValueVisible: false }, pane.paneIndex());
         pS.setData(toTS(plusDI));
         mS.setData(toTS(minusDI));
         aS.setData(toTS(adx));
         subPaneSeriesRef.current.set("DMI", [pS, mS, aS]);
-        subPaneRef.current.set("DMI", pIdx);
+        subPaneRef.current.set("DMI", pane);
 
       } else if (key === "CCI") {
         const pane = chart.addPane();
-        const pIdx = pane.paneIndex();
-        const s = chart.addSeries(LineSeries, { color: "#9b59b6", lineWidth: 1, priceLineVisible: false, lastValueVisible: false }, pIdx);
+        const s = chart.addSeries(LineSeries, { color: "#9b59b6", lineWidth: 1, priceLineVisible: false, lastValueVisible: false }, pane.paneIndex());
         s.setData(toTS(calcCCI(data)));
         subPaneSeriesRef.current.set("CCI", [s]);
-        subPaneRef.current.set("CCI", pIdx);
+        subPaneRef.current.set("CCI", pane);
 
       } else if (key === "OBV") {
         const pane = chart.addPane();
-        const pIdx = pane.paneIndex();
-        const s = chart.addSeries(LineSeries, { color: "#1e90ff", lineWidth: 1, priceLineVisible: false, lastValueVisible: false }, pIdx);
+        const s = chart.addSeries(LineSeries, { color: "#1e90ff", lineWidth: 1, priceLineVisible: false, lastValueVisible: false }, pane.paneIndex());
         s.setData(toTS(calcOBV(data)));
         subPaneSeriesRef.current.set("OBV", [s]);
-        subPaneRef.current.set("OBV", pIdx);
+        subPaneRef.current.set("OBV", pane);
       }
     }
   }, [removeIndicator]);
@@ -242,14 +234,11 @@ export default function ChartWidget({ pair }: { pair: string }) {
       ]) {
         removeIndicator(key);
       }
-      setActiveIndicators((prev) => {
-        syncIndicators(prev);
-        return prev;
-      });
+      setActiveIndicators((prev) => new Set(prev));
     } catch (e) {
       console.error("Failed to load klines", e);
     }
-  }, [pair, syncIndicators, removeIndicator]);
+  }, [pair, removeIndicator]);
 
   // Create chart once on mount
   useEffect(() => {
@@ -268,7 +257,11 @@ export default function ChartWidget({ pair }: { pair: string }) {
     });
     chartRef.current = chart;
     candleSeriesRef.current = series;
-    return () => { chart.remove(); };
+    return () => {
+      chart.remove();
+      chartRef.current = null;
+      candleSeriesRef.current = null;
+    };
   }, []);
 
   // Reload klines when pair or interval changes
