@@ -14,9 +14,11 @@ class Bot(Base):
     id = Column(Integer, primary_key=True)
     name = Column(String(100), nullable=False)
     description = Column(String(500))
+    strategy_type = Column(String(20), default="alternating")
     strategy_config = Column(JSON, default={})
     status = Column(Enum(BotStatus), default=BotStatus.active)
     max_drawdown_limit = Column(Numeric(5, 2), default=20.0)
+    monthly_fee = Column(Numeric(10, 2), default=0)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     evicted_at = Column(DateTime(timezone=True), nullable=True)
 
@@ -32,6 +34,7 @@ class BotSubscription(Base):
     is_active = Column(Boolean, default=True)
     started_at = Column(DateTime(timezone=True), server_default=func.now())
     ended_at = Column(DateTime(timezone=True), nullable=True)
+    allocated_usdt = Column(Numeric(18, 2), nullable=False, server_default="100")
 
     user = relationship("User", back_populates="bot_subscriptions")
     bot = relationship("Bot", back_populates="subscriptions")
@@ -45,6 +48,7 @@ class BotPerformance(Base):
     win_rate = Column(Numeric(5, 2), default=0)
     monthly_return_pct = Column(Numeric(10, 4), default=0)
     max_drawdown_pct = Column(Numeric(5, 2), default=0)
+    sharpe_ratio = Column(Numeric(8, 4), default=0)
     total_trades = Column(Integer, default=0)
 
     bot = relationship("Bot", back_populates="performance")
