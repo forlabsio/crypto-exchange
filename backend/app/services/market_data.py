@@ -1,217 +1,195 @@
 """
-market_data.py
+market_data.py - CoinGecko API Integration
 - REST helpers (fetch_ticker, fetch_klines, etc.) for initial page load
-- BinanceStreamManager: connects to Binance WebSocket streams for real-time data,
-  stores each update in Redis AND broadcasts to all connected browser clients
+- Polling loop for simulated real-time data updates
 """
 import json
 import asyncio
 import httpx
-import websockets
 from typing import List, Optional, Callable, Awaitable
-from app.config import settings
+from datetime import datetime, timedelta
 from app.core.redis import get_redis
 
-PAIR_MAP = {
-    "BTC_USDT": "btcusdt",
-    "ETH_USDT": "ethusdt",
-    "BNB_USDT": "bnbusdt",
-    "SOL_USDT": "solusdt",
+# Map internal pairs to CoinGecko IDs
+COINGECKO_MAP = {
+    "BTC_USDT": "bitcoin",
+    "ETH_USDT": "ethereum",
+    "BNB_USDT": "binancecoin",
+    "SOL_USDT": "solana",
 }
 
-PAIR_MAP_UPPER = {
-    "BTC_USDT": "BTCUSDT",
-    "ETH_USDT": "ETHUSDT",
-    "BNB_USDT": "BNBUSDT",
-    "SOL_USDT": "SOLUSDT",
-}
+COINGECKO_BASE = "https://api.coingecko.com/api/v3"
 
-BINANCE_WS_BASE = "wss://stream.binance.com:9443"
+# Broadcast callback type: async (pair, payload_dict) -> None
+BroadcastCb = Callable[[str, dict], Awaitable[None]]
 
 # ──────────────────────────────────────────────
 # REST helpers (used for klines and initial load)
 # ──────────────────────────────────────────────
 
 async def fetch_ticker(pair: str) -> dict:
-    symbol = PAIR_MAP_UPPER.get(pair, pair.replace("_", ""))
-    async with httpx.AsyncClient() as client:
-        r = await client.get(
-            f"{settings.BINANCE_BASE_URL}/api/v3/ticker/24hr",
-            params={"symbol": symbol},
-        )
-        data = r.json()
-    return {
-        "pair": pair,
-        "last_price": data["lastPrice"],
-        "change_pct": data["priceChangePercent"],
-        "high": data["highPrice"],
-        "low": data["lowPrice"],
-        "volume": data["volume"],
-        "quote_volume": data["quoteVolume"],
-    }
+    """Fetch current price and 24h stats from CoinGecko"""
+    coin_id = COINGECKO_MAP.get(pair)
+    if not coin_id:
+        print(f"[ERROR] Unknown pair: {pair}")
+        return {}
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.get(
+                f"{COINGECKO_BASE}/coins/{coin_id}",
+                params={
+                    "localization": "false",
+                    "tickers": "false",
+                    "market_data": "true",
+                    "community_data": "false",
+                    "developer_data": "false",
+                },
+            )
+            data = r.json()
+
+        market_data = data.get("market_data", {})
+        current_price = market_data.get("current_price", {}).get("usd", 0)
+        price_change_24h = market_data.get("price_change_percentage_24h", 0)
+        high_24h = market_data.get("high_24h", {}).get("usd", 0)
+        low_24h = market_data.get("low_24h", {}).get("usd", 0)
+        volume_24h = market_data.get("total_volume", {}).get("usd", 0)
+
+        return {
+            "pair": pair,
+            "last_price": str(current_price),
+            "change_pct": str(price_change_24h),
+            "high": str(high_24h),
+            "low": str(low_24h),
+            "volume": str(volume_24h),
+            "quote_volume": str(volume_24h),
+        }
+    except Exception as e:
+        print(f"[ERROR] fetch_ticker {pair}: {e}")
+        return {}
 
 async def fetch_klines(pair: str, interval: str = "1m", limit: int = 500) -> list:
-    symbol = PAIR_MAP_UPPER.get(pair, pair.replace("_", ""))
-    async with httpx.AsyncClient() as client:
-        r = await client.get(
-            f"{settings.BINANCE_BASE_URL}/api/v3/klines",
-            params={"symbol": symbol, "interval": interval, "limit": limit},
-        )
-        data = r.json()
-
-    # Check if response is an error
-    if isinstance(data, dict) and "code" in data:
-        print(f"[ERROR] Binance API error: {data}")
+    """
+    Fetch OHLC data from CoinGecko
+    Note: CoinGecko only provides daily data, so we'll return what we can
+    """
+    coin_id = COINGECKO_MAP.get(pair)
+    if not coin_id:
+        print(f"[ERROR] Unknown pair: {pair}")
         return []
 
-    # Validate data format
-    if not isinstance(data, list) or not data:
-        print(f"[ERROR] Unexpected klines response: {data}")
-        return []
+    # Map interval to days (CoinGecko uses days)
+    days_map = {
+        "1m": 1,
+        "5m": 1,
+        "15m": 1,
+        "1h": 7,
+        "4h": 30,
+        "1d": 90,
+    }
+    days = days_map.get(interval, 7)
 
-    return [
-        {
-            "time": int(k[0]) // 1000,
-            "open": float(k[1]),
-            "high": float(k[2]),
-            "low": float(k[3]),
-            "close": float(k[4]),
-            "volume": float(k[5]),
-        }
-        for k in data
-        if isinstance(k, list) and len(k) >= 6
-    ]
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            # Use market_chart endpoint for price history
+            r = await client.get(
+                f"{COINGECKO_BASE}/coins/{coin_id}/market_chart",
+                params={
+                    "vs_currency": "usd",
+                    "days": str(days),
+                    "interval": "hourly" if days <= 7 else "daily",
+                },
+            )
+            data = r.json()
+
+        prices = data.get("prices", [])
+
+        # Convert to OHLC format (simplified - using price as all values)
+        # CoinGecko free API doesn't provide true OHLC, so we approximate
+        klines = []
+        for i, price_data in enumerate(prices[-limit:]):
+            timestamp, price = price_data
+            klines.append({
+                "time": int(timestamp // 1000),
+                "open": float(price),
+                "high": float(price * 1.001),  # Approximate
+                "low": float(price * 0.999),    # Approximate
+                "close": float(price),
+                "volume": 1000000.0,  # Placeholder
+            })
+
+        return klines
+    except Exception as e:
+        print(f"[ERROR] fetch_klines {pair}: {e}")
+        return []
 
 async def sync_market_to_redis(pair: str):
     """One-shot REST fetch for initial cache warm-up."""
     redis = await get_redis()
     ticker = await fetch_ticker(pair)
-    await redis.set(f"market:{pair}:ticker", json.dumps(ticker), ex=60)
-
+    if ticker:
+        await redis.set(f"market:{pair}:ticker", json.dumps(ticker), ex=60)
 
 # ──────────────────────────────────────────────
-# Binance WebSocket Stream Manager
+# Polling loop for simulated real-time updates
 # ──────────────────────────────────────────────
 
-# Broadcast callback type: async (pair, payload_dict) -> None
-BroadcastCb = Callable[[str, dict], Awaitable[None]]
-
-
-async def _stream_pair(
+async def _poll_pair(
     pair: str,
     broadcast_cb: BroadcastCb,
-    retry_delay: float = 3.0,
+    interval_sec: int = 10,
 ):
     """
-    Subscribe to Binance combined stream for one pair:
-      - @miniTicker  → ticker (price, 24h stats)
-      - @depth20@100ms → orderbook top-20 (updated every 100ms)
-      - @trade        → individual trades
-
-    On each message:
-      1. Update Redis
-      2. Call broadcast_cb to push to connected browser clients
+    Poll CoinGecko API periodically and broadcast updates
     """
-    sym = PAIR_MAP.get(pair, pair.lower().replace("_", ""))
-    stream = f"{sym}@ticker/{sym}@depth20@100ms/{sym}@trade"
-    url = f"{BINANCE_WS_BASE}/stream?streams={stream}"
-
     redis = await get_redis()
-
-    # Cached snapshots (rebuilt incrementally)
-    ticker_cache: dict = {}
-    orderbook_cache: dict = {"bids": [], "asks": []}
-    trades_cache: list = []
 
     while True:
         try:
-            async with websockets.connect(
-                url,
-                ping_interval=20,
-                ping_timeout=10,
-                close_timeout=5,
-            ) as ws:
-                print(f"[Binance WS] Connected: {stream}")
-                async for raw in ws:
-                    try:
-                        envelope = json.loads(raw)
-                        data = envelope.get("data", {})
-                        stream_name = envelope.get("stream", "")
+            ticker = await fetch_ticker(pair)
+            if ticker:
+                # Store in Redis
+                await redis.set(
+                    f"market:{pair}:ticker",
+                    json.dumps(ticker),
+                    ex=60,
+                )
 
-                        if "@ticker" in stream_name and "@depth" not in stream_name:
-                            ticker_cache = {
-                                "pair": pair,
-                                "last_price": data["c"],
-                                "change_pct": data["P"],
-                                "high": data["h"],
-                                "low": data["l"],
-                                "volume": data["v"],
-                                "quote_volume": data["q"],
-                            }
-                            await redis.set(
-                                f"market:{pair}:ticker",
-                                json.dumps(ticker_cache),
-                                ex=60,
-                            )
-                            # Push ticker update to clients
-                            await broadcast_cb(pair, {
-                                "type": "ticker",
-                                "ticker": ticker_cache,
-                            })
+                # Broadcast to connected clients
+                await broadcast_cb(pair, {
+                    "type": "ticker",
+                    "ticker": ticker,
+                })
 
-                        elif "@depth20" in stream_name:
-                            orderbook_cache = {
-                                "pair": pair,
-                                "bids": data.get("bids", []),
-                                "asks": data.get("asks", []),
-                            }
-                            await redis.set(
-                                f"market:{pair}:orderbook",
-                                json.dumps(orderbook_cache),
-                                ex=30,
-                            )
-                            # Push orderbook update to clients
-                            await broadcast_cb(pair, {
-                                "type": "orderbook",
-                                "orderbook": orderbook_cache,
-                            })
+            # Simulate orderbook (placeholder data)
+            orderbook = {
+                "pair": pair,
+                "bids": [[ticker.get("last_price", "0"), "1.0"] for _ in range(20)],
+                "asks": [[ticker.get("last_price", "0"), "1.0"] for _ in range(20)],
+            }
+            await redis.set(
+                f"market:{pair}:orderbook",
+                json.dumps(orderbook),
+                ex=30,
+            )
+            await broadcast_cb(pair, {
+                "type": "orderbook",
+                "orderbook": orderbook,
+            })
 
-                        elif "@trade" in stream_name:
-                            trade = {
-                                "price": data["p"],
-                                "qty": data["q"],
-                                "time": data["T"],
-                                "is_buyer_maker": data["m"],
-                            }
-                            trades_cache.insert(0, trade)
-                            trades_cache = trades_cache[:50]
-                            await redis.set(
-                                f"market:{pair}:trades",
-                                json.dumps(trades_cache),
-                                ex=30,
-                            )
-                            # Push trade to clients
-                            await broadcast_cb(pair, {
-                                "type": "trade",
-                                "trade": trade,
-                            })
+        except Exception as e:
+            print(f"[CoinGecko Poll] Error {pair}: {e}")
 
-                    except Exception as parse_err:
-                        print(f"[Binance WS] Parse error {pair}: {parse_err}")
-
-        except Exception as conn_err:
-            print(f"[Binance WS] Connection error {pair}: {conn_err}. Retrying in {retry_delay}s…")
-            await asyncio.sleep(retry_delay)
-
+        await asyncio.sleep(interval_sec)
 
 async def market_data_loop(
     pairs: List[str],
     broadcast_cb: Optional[BroadcastCb] = None,
-    interval_sec: int = 5,  # kept for compat, unused
+    interval_sec: int = 10,
 ):
     """
-    Launch one Binance WS stream per pair concurrently.
-    broadcast_cb is called for every real-time update.
+    Launch polling loops for each pair
+    broadcast_cb is called for every update
     """
     if broadcast_cb is None:
         # No-op fallback (stores to Redis only)
@@ -219,12 +197,12 @@ async def market_data_loop(
             pass
         broadcast_cb = _noop
 
-    # Initial REST warm-up so Redis has data before first WS message
+    # Initial REST warm-up
     for pair in pairs:
         try:
             await sync_market_to_redis(pair)
         except Exception as e:
             print(f"[Warm-up] {pair}: {e}")
 
-    # Run all pair streams concurrently
-    await asyncio.gather(*[_stream_pair(pair, broadcast_cb) for pair in pairs])
+    # Run all pair polling loops concurrently
+    await asyncio.gather(*[_poll_pair(pair, broadcast_cb, interval_sec) for pair in pairs])
