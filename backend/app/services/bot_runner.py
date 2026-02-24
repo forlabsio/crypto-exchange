@@ -50,9 +50,14 @@ async def generate_signal(bot: Bot, pair: str) -> Optional[str]:
     elif strategy == "ma_cross":
         fast = int(config.get("fast_period", 5))
         slow = int(config.get("slow_period", 20))
+        if fast >= slow:
+            print(f"MA cross bot {bot.id}: fast_period ({fast}) must be < slow_period ({slow}), skipping")
+            return None
         try:
             klines = await fetch_klines(pair, "1h", slow + 5)
             closes = [float(k["close"]) for k in klines]
+            if len(closes) < slow + 1:
+                return None
             fast_ma = calc_ma(closes, fast)
             slow_ma = calc_ma(closes, slow)
             prev_fast = calc_ma(closes[:-1], fast)
@@ -79,6 +84,8 @@ async def generate_signal(bot: Bot, pair: str) -> Optional[str]:
         except Exception as e:
             print(f"Bollinger signal error bot {bot.id}: {e}")
 
+    # Only update the cooldown timer when a real signal was produced.
+    # `alternating` always produces a signal; indicator strategies may return None on neutral markets.
     if signal:
         await redis.set(last_trade_key, now)
     return signal
