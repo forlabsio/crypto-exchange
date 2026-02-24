@@ -91,7 +91,7 @@ function SubscribeModal({ bot, allocation, onAllocationChange, onConfirm, onCanc
               type="number"
               min={1}
               max={usdtBalance > 0 ? usdtBalance : undefined}
-              step={10}
+              step={1}
               value={allocation}
               onChange={(e) => onAllocationChange(Math.max(1, Number(e.target.value)))}
               title="할당 금액 (USDT)"
@@ -244,36 +244,49 @@ export default function BotMarketPage() {
 
   useEffect(() => {
     if (!token) return;
+    fetchUsdtBalance();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token]);
+
+  const fetchUsdtBalance = () => {
+    if (!token) return;
     apiFetch("/api/wallet")
       .then((data: Array<{ asset: string; balance: string }>) => {
         const usdt = data.find((w) => w.asset === "USDT");
         setUsdtBalance(usdt ? parseFloat(usdt.balance) : 0);
       })
       .catch(() => {});
-  }, [token]);
+  };
 
   const handleSubscribeClick = (bot: Bot) => {
     if (!token) { router.push("/login"); return; }
+    fetchUsdtBalance();
     setPendingAllocation(100);
     setPendingBot(bot);
   };
 
   const handleConfirmSubscribe = async () => {
     if (!pendingBot) return;
+    if (pendingAllocation <= 0 || (usdtBalance > 0 && pendingAllocation > usdtBalance)) {
+      alert(`할당 금액은 1 이상 보유 잔액(${usdtBalance.toFixed(2)} USDT) 이하여야 합니다.`);
+      return;
+    }
     setSubscribing(true);
     try {
       await subscribe(pendingBot.id, pendingAllocation);
       await fetchBots();
+      fetchUsdtBalance();
       setPendingBot(null);
       alert("봇 연동이 완료되었습니다!");
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       if (msg.includes("Already subscribed")) {
         alert("이미 연동된 봇입니다.");
+        setPendingBot(null);
       } else {
         alert("연동 실패: " + msg);
+        // Keep modal open so user can adjust and retry
       }
-      setPendingBot(null);
     } finally {
       setSubscribing(false);
     }
