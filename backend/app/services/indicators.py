@@ -3,7 +3,9 @@ from typing import List, Tuple
 
 
 def calc_rsi(closes: List[float], period: int = 14) -> float:
-    """Compute RSI from a list of closing prices. Returns 50.0 if insufficient data."""
+    """Compute RSI (Cutler's simple-average variant) from closing prices.
+    Uses simple mean of gains/losses over the last `period` deltas, not
+    Wilder's exponential smoothing. Returns 50.0 if insufficient data."""
     if len(closes) < period + 1:
         return 50.0
     deltas = [closes[i] - closes[i - 1] for i in range(1, len(closes))]
@@ -13,7 +15,7 @@ def calc_rsi(closes: List[float], period: int = 14) -> float:
     avg_gain = sum(gains) / period
     avg_loss = sum(losses) / period
     if avg_loss == 0:
-        return 100.0
+        return 100.0 if avg_gain > 0 else 50.0
     rs = avg_gain / avg_loss
     return 100.0 - (100.0 / (1.0 + rs))
 
@@ -34,6 +36,6 @@ def calc_bollinger(
         return (last * 0.95, last * 1.05)
     window = closes[-period:]
     ma = sum(window) / period
-    variance = sum((p - ma) ** 2 for p in window) / period
+    variance = sum((p - ma) ** 2 for p in window) / period  # population std dev (Bollinger standard)
     std = math.sqrt(variance)
     return (ma - std_dev * std, ma + std_dev * std)
