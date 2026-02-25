@@ -39,6 +39,10 @@ interface MarketStore {
 
 let ws: WebSocket | null = null;
 let lastOrderbookMs = 0; // throttle orderbook renders to prevent excessive re-renders
+let reconnectTimer: NodeJS.Timeout | null = null;
+let currentPair: string | null = null;
+let reconnectAttempts = 0;
+const MAX_RECONNECT_DELAY = 30000; // max 30 seconds
 
 export const useMarketStore = create<MarketStore>((set) => ({
   ticker: null,
@@ -48,26 +52,66 @@ export const useMarketStore = create<MarketStore>((set) => ({
   connected: false,
 
   connect: (pair: string) => {
-    if (ws) ws.close();
+    // Clear any pending reconnection
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+
+    // Close existing connection
+    if (ws) {
+      ws.close();
+      ws = null;
+    }
+
+    currentPair = pair;
     const wsUrl = process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8000";
     const fullUrl = `${wsUrl}/ws/market/${pair}`;
-    console.log("[MarketStore] Connecting to WebSocket:", fullUrl);
+    console.log("[MarketStore] Connecting to WebSocket:", fullUrl, `(attempt ${reconnectAttempts + 1})`);
+
     const newWs = new WebSocket(fullUrl);
     ws = newWs;
 
     // Guard all handlers so stale WS events don't corrupt state after reconnect
     newWs.onopen = () => {
-      console.log("[MarketStore] WebSocket connected for pair:", pair);
+      console.log("[MarketStore] ✅ WebSocket connected for pair:", pair);
+      reconnectAttempts = 0; // reset on successful connection
       if (ws === newWs) set({ connected: true });
     };
+
     newWs.onclose = (event) => {
-      console.log("[MarketStore] WebSocket closed:", event.code, event.reason);
-      if (ws === newWs) set({ connected: false });
+      console.log("[MarketStore] ❌ WebSocket closed:", event.code, event.reason);
+      if (ws === newWs) {
+        set({ connected: false });
+        // Auto-reconnect with exponential backoff
+        scheduleReconnect();
+      }
     };
+
     newWs.onerror = (error) => {
-      console.error("[MarketStore] WebSocket error:", error);
-      if (ws === newWs) set({ connected: false });
+      console.error("[MarketStore] ⚠️ WebSocket error:", error);
+      if (ws === newWs) {
+        set({ connected: false });
+      }
     };
+
+    // Helper function for exponential backoff reconnection
+    function scheduleReconnect() {
+      if (!currentPair) return; // don't reconnect if disconnect() was called
+
+      reconnectAttempts++;
+      // Exponential backoff: 1s, 2s, 4s, 8s, 16s, max 30s
+      const delay = Math.min(1000 * Math.pow(2, reconnectAttempts - 1), MAX_RECONNECT_DELAY);
+      console.log(`[MarketStore] Reconnecting in ${delay}ms... (attempt ${reconnectAttempts})`);
+
+      reconnectTimer = setTimeout(() => {
+        if (currentPair) {
+          console.log(`[MarketStore] Attempting reconnect for ${currentPair}...`);
+          const store = useMarketStore.getState();
+          store.connect(currentPair);
+        }
+      }, delay);
+    }
     newWs.onmessage = (e) => {
       if (ws !== newWs) return; // ignore messages from replaced connections
       try {
@@ -117,10 +161,20 @@ export const useMarketStore = create<MarketStore>((set) => ({
   },
 
   disconnect: () => {
+    console.log("[MarketStore] Manually disconnecting WebSocket");
+    currentPair = null; // signal that we don't want to auto-reconnect
+    reconnectAttempts = 0;
+
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+
     if (ws) {
       ws.close();
       ws = null;
     }
+
     set({ connected: false, latestKline: null });
   },
 }));
