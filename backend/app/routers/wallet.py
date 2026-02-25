@@ -83,7 +83,11 @@ async def verify_deposit(
     if existing:
         if existing.status == DepositStatus.confirmed:
             raise HTTPException(409, "This transaction has already been credited")
-        raise HTTPException(409, "This transaction is already being processed")
+        if existing.status == DepositStatus.pending:
+            raise HTTPException(409, "This transaction is already being processed")
+        # If failed, allow retry — delete old record and proceed
+        await db.delete(existing)
+        await db.flush()
 
     # Create pending record
     deposit = DepositTransaction(
