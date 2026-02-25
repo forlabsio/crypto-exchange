@@ -6,6 +6,7 @@ export interface BotPerformance {
   monthly_return_pct: number;
   max_drawdown_pct: number;
   sharpe_ratio: number;
+  calculated_at?: string | null;
 }
 
 export interface Bot {

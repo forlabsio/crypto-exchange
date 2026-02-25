@@ -1,18 +1,16 @@
-import json
 from datetime import datetime, date
 from decimal import Decimal
-from statistics import mean, stdev as statistics_stdev
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
+from sqlalchemy import select, func, desc
 from app.database import get_db
 from app.core.deps import get_current_user, get_optional_user
-from app.core.redis import get_redis
 from app.models.user import User
 from app.models.bot import Bot, BotSubscription, BotStatus, BotPerformance
-from app.models.order import Order, Trade, OrderSide, OrderType
+from app.models.order import Order, Trade
+from app.services.stats import calc_bot_stats
 
 
 class SubscribeRequest(BaseModel):
@@ -24,108 +22,27 @@ router = APIRouter(prefix="/api/bots", tags=["bots"])
 
 def _perf_dict(perf) -> dict:
     if not perf:
-        return {"win_rate": 0.0, "monthly_return_pct": 0.0, "max_drawdown_pct": 0.0, "sharpe_ratio": 0.0}
+        return {
+            "win_rate": 0.0, "monthly_return_pct": 0.0,
+            "max_drawdown_pct": 0.0, "sharpe_ratio": 0.0,
+            "calculated_at": None,
+        }
     return {
         "win_rate": float(perf.win_rate) if perf.win_rate is not None else 0.0,
         "monthly_return_pct": float(perf.monthly_return_pct) if perf.monthly_return_pct is not None else 0.0,
         "max_drawdown_pct": float(perf.max_drawdown_pct) if perf.max_drawdown_pct is not None else 0.0,
         "sharpe_ratio": float(perf.sharpe_ratio) if perf.sharpe_ratio is not None else 0.0,
-    }
-
-
-async def _calc_live_stats(db: AsyncSession, user_id: int, bot_id: int, allocated: Decimal, pair: str) -> dict:
-    """Calculate real-time P&L, win rate, MDD, sharpe from actual filled orders."""
-    orders = list(await db.scalars(
-        select(Order).where(
-            Order.user_id == user_id,
-            Order.bot_id == bot_id,
-            Order.status == "filled",
-        ).order_by(Order.created_at)
-    ))
-
-    buy_cost = Decimal("0")
-    sell_proceeds = Decimal("0")
-    buy_qty_total = Decimal("0")
-    net_qty = Decimal("0")
-    running_usdt = allocated
-    running_base = Decimal("0")
-    wins = 0
-    total_sells = 0
-    trade_returns: list = []
-    portfolio_history: list = []
-
-    for o in orders:
-        trade = await db.scalar(select(Trade).where(Trade.order_id == o.id))
-        fill_price = Decimal(str(trade.price)) if trade else Decimal(str(o.price or 0))
-        if fill_price == 0:
-            continue
-        qty = Decimal(str(o.filled_quantity or 0))
-
-        if o.side == "buy":
-            buy_cost += qty * fill_price
-            buy_qty_total += qty
-            net_qty += qty
-            running_usdt -= qty * fill_price
-            running_base += qty
-        else:
-            avg_cost = buy_cost / buy_qty_total if buy_qty_total > 0 else Decimal("0")
-            sell_proceeds += qty * fill_price
-            net_qty -= qty
-            running_usdt += qty * fill_price
-            running_base = max(running_base - qty, Decimal("0"))
-            total_sells += 1
-            if fill_price > avg_cost:
-                wins += 1
-            if avg_cost > 0:
-                trade_returns.append(float((fill_price - avg_cost) / avg_cost * 100))
-
-        portfolio_history.append(float(running_usdt + running_base * fill_price))
-
-    net_qty = max(net_qty, Decimal("0"))
-
-    redis = await get_redis()
-    ticker = await redis.get(f"market:{pair}:ticker")
-    current_price = Decimal(json.loads(ticker)["last_price"]) if ticker else Decimal("0")
-
-    unrealized = net_qty * current_price
-    pnl = sell_proceeds + unrealized - buy_cost
-    pnl_pct = float(pnl / allocated * 100) if allocated > 0 else 0.0
-    win_rate = float(wins / total_sells * 100) if total_sells > 0 else 0.0
-
-    max_dd = 0.0
-    if portfolio_history:
-        peak = portfolio_history[0]
-        for val in portfolio_history:
-            if val > peak:
-                peak = val
-            if peak > 0:
-                dd = (peak - val) / peak * 100
-                if dd > max_dd:
-                    max_dd = dd
-
-    sharpe = 0.0
-    if len(trade_returns) >= 2:
-        avg_r = mean(trade_returns)
-        std_r = statistics_stdev(trade_returns)
-        sharpe = avg_r / std_r if std_r > 0 else 0.0
-
-    return {
-        "pnl_usdt": float(pnl),
-        "pnl_pct": pnl_pct,
-        "win_rate": win_rate,
-        "max_drawdown_pct": max_dd,
-        "sharpe_ratio": sharpe,
-        "trade_count": len(orders),
+        "calculated_at": perf.calculated_at.isoformat() if perf.calculated_at else None,
     }
 
 
 async def _bot_dict(db: AsyncSession, bot: Bot, user: Optional[User] = None) -> dict:
-    period = date.today().strftime("%Y-%m")
+    # Bot market shows the most recently aggregated performance (set by daily_performance_update)
     perf = await db.scalar(
-        select(BotPerformance).where(
-            BotPerformance.bot_id == bot.id,
-            BotPerformance.period == period,
-        )
+        select(BotPerformance)
+        .where(BotPerformance.bot_id == bot.id)
+        .order_by(desc(BotPerformance.calculated_at))
+        .limit(1)
     )
     sub_count = await db.scalar(
         select(func.count(BotSubscription.id)).where(
@@ -194,7 +111,7 @@ async def my_bots(
         config = bot.strategy_config or {}
         pair = config.get("pair", "BTC_USDT")
         allocated = Decimal(str(sub.allocated_usdt or 100))
-        live = await _calc_live_stats(db, user.id, bot.id, allocated, pair)
+        live = await calc_bot_stats(db, user.id, bot.id, allocated, pair)
         d["pnl_usdt"] = live["pnl_usdt"]
         d["performance"]["monthly_return_pct"] = live["pnl_pct"]
         if live["trade_count"] > 0:

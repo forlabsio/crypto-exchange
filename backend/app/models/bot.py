@@ -50,5 +50,6 @@ class BotPerformance(Base):
     max_drawdown_pct = Column(Numeric(5, 2), default=0)
     sharpe_ratio = Column(Numeric(8, 4), default=0)
     total_trades = Column(Integer, default=0)
+    calculated_at = Column(DateTime(timezone=True), nullable=True)
 
     bot = relationship("Bot", back_populates="performance")

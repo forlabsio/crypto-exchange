@@ -9,7 +9,7 @@ from app.routers.ws import _binance_broadcast_cb
 from app.core.redis import get_redis
 from app.services.market_data import market_data_loop
 from app.services.bot_runner import bot_runner_loop
-from app.services.bot_eviction import daily_drawdown_check, monthly_evaluation
+from app.services.bot_eviction import daily_drawdown_check, monthly_evaluation, daily_performance_update
 
 SUPPORTED_PAIRS = ["BTC_USDT", "ETH_USDT", "BNB_USDT", "SOL_USDT"]
 scheduler = AsyncIOScheduler()
@@ -21,6 +21,7 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(market_data_loop(SUPPORTED_PAIRS, broadcast_cb=_binance_broadcast_cb, interval_sec=60))
     asyncio.create_task(bot_runner_loop())
     scheduler.add_job(daily_drawdown_check, "cron", hour=0, minute=0)
+    scheduler.add_job(daily_performance_update, "cron", hour=0, minute=5)
     scheduler.add_job(monthly_evaluation, "cron", day="last", hour=23, minute=59)
     scheduler.start()
     yield

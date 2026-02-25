@@ -1,4 +1,6 @@
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
+from decimal import Decimal
+from statistics import mean
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import AsyncSessionLocal
@@ -6,6 +8,7 @@ from app.models.bot import Bot, BotSubscription, BotPerformance, BotStatus
 from app.models.order import Order, OrderStatus
 from app.models.notification import Notification
 from app.core.redis import get_redis
+from app.services.stats import calc_bot_stats
 
 def should_evict_bot(performance, max_drawdown_limit: float) -> bool:
     if float(performance.win_rate) < 70.0:
@@ -71,3 +74,69 @@ async def daily_drawdown_check():
             mdd_str = await redis.get(f"bot:{bot.id}:daily_mdd")
             if mdd_str and float(mdd_str) > 15.0:
                 await evict_bot(db, bot.id, reason="일중 MDD 15% 초과")
+
+
+async def daily_performance_update():
+    """Run at 00:05 daily. Aggregate all active subscribers' trade stats for each bot
+    and upsert into BotPerformance. This is what the bot market cards display."""
+    yesterday = date.today() - timedelta(days=1)
+    period = yesterday.strftime("%Y-%m")
+    # cutoff = midnight of today (= end of yesterday)
+    cutoff = datetime.combine(date.today(), datetime.min.time())
+
+    async with AsyncSessionLocal() as db:
+        bots = list(await db.scalars(select(Bot).where(Bot.status == BotStatus.active)))
+        for bot in bots:
+            subs = list(await db.scalars(
+                select(BotSubscription).where(
+                    BotSubscription.bot_id == bot.id,
+                    BotSubscription.is_active == True,
+                )
+            ))
+            if not subs:
+                continue
+
+            config = bot.strategy_config or {}
+            pair = config.get("pair", "BTC_USDT")
+
+            pnl_pcts, win_rates, mdds, sharpes = [], [], [], []
+            total_trades = 0
+
+            for sub in subs:
+                allocated = Decimal(str(sub.allocated_usdt or 100))
+                stats = await calc_bot_stats(
+                    db=db,
+                    user_id=sub.user_id,
+                    bot_id=bot.id,
+                    allocated=allocated,
+                    pair=pair,
+                    cutoff=cutoff,
+                )
+                if stats["trade_count"] > 0:
+                    pnl_pcts.append(stats["pnl_pct"])
+                    win_rates.append(stats["win_rate"])
+                    mdds.append(stats["max_drawdown_pct"])
+                    sharpes.append(stats["sharpe_ratio"])
+                    total_trades += stats["trade_count"]
+
+            if not pnl_pcts:
+                continue
+
+            perf = await db.scalar(
+                select(BotPerformance).where(
+                    BotPerformance.bot_id == bot.id,
+                    BotPerformance.period == period,
+                )
+            )
+            if not perf:
+                perf = BotPerformance(bot_id=bot.id, period=period)
+                db.add(perf)
+
+            perf.win_rate = mean(win_rates)
+            perf.monthly_return_pct = mean(pnl_pcts)
+            perf.max_drawdown_pct = mean(mdds)
+            perf.sharpe_ratio = mean(sharpes)
+            perf.total_trades = total_trades
+            perf.calculated_at = datetime.utcnow()
+
+        await db.commit()

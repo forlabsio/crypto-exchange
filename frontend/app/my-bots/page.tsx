@@ -262,10 +262,13 @@ function MyBotCard({ bot }: { bot: Bot }) {
         <div className="rounded-xl p-4 flex items-center justify-between"
           style={{ background: "var(--bg-base)", border: "1px solid var(--border)" }}>
           <div>
-            <p className="text-xs mb-1" style={{ color: "var(--text-secondary)" }}>투자 금액</p>
+            <p className="text-xs mb-1" style={{ color: "var(--text-secondary)" }}>평가 금액</p>
             <p className="text-2xl font-bold" style={{ color: "var(--text-primary)" }}>
-              ${allocatedUsdt.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              ${(allocatedUsdt + (bot.pnl_usdt ?? 0)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               <span className="text-sm font-normal ml-1" style={{ color: "var(--text-secondary)" }}>USDT</span>
+            </p>
+            <p className="text-xs mt-0.5" style={{ color: "var(--text-secondary)" }}>
+              원금 ${allocatedUsdt.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </p>
           </div>
           <div className="text-right">
@@ -328,20 +331,29 @@ function MyBotCard({ bot }: { bot: Bot }) {
 
 function SummaryBar({ bots }: { bots: Bot[] }) {
   const totalInvested = bots.reduce((s, b) => s + (b.allocated_usdt ?? 100), 0);
+  const totalPnl = bots.reduce((s, b) => s + (b.pnl_usdt ?? 0), 0);
+  const totalValue = totalInvested + totalPnl;
   const activeBots = bots.filter((b) => b.status === "active").length;
 
   return (
     <div className="grid grid-cols-3 gap-3 mb-6">
-      {[
-        { label: "연동된 봇", value: `${bots.length}개` },
-        { label: "운영 중", value: `${activeBots}개`, color: activeBots > 0 ? "var(--green)" : "var(--text-primary)" },
-        { label: "총 투자 금액", value: `$${totalInvested.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USDT` },
-      ].map(({ label, value, color }) => (
-        <div key={label} className="rounded-xl p-4" style={{ background: "var(--bg-panel)", border: "1px solid var(--border)" }}>
-          <p className="text-xs mb-1" style={{ color: "var(--text-secondary)" }}>{label}</p>
-          <p className="text-lg font-bold" style={{ color: color || "var(--text-primary)" }}>{value}</p>
-        </div>
-      ))}
+      <div className="rounded-xl p-4" style={{ background: "var(--bg-panel)", border: "1px solid var(--border)" }}>
+        <p className="text-xs mb-1" style={{ color: "var(--text-secondary)" }}>연동된 봇</p>
+        <p className="text-lg font-bold" style={{ color: "var(--text-primary)" }}>{bots.length}개</p>
+      </div>
+      <div className="rounded-xl p-4" style={{ background: "var(--bg-panel)", border: "1px solid var(--border)" }}>
+        <p className="text-xs mb-1" style={{ color: "var(--text-secondary)" }}>운영 중</p>
+        <p className="text-lg font-bold" style={{ color: activeBots > 0 ? "var(--green)" : "var(--text-primary)" }}>{activeBots}개</p>
+      </div>
+      <div className="rounded-xl p-4" style={{ background: "var(--bg-panel)", border: "1px solid var(--border)" }}>
+        <p className="text-xs mb-1" style={{ color: "var(--text-secondary)" }}>총 평가 금액</p>
+        <p className="text-lg font-bold font-mono" style={{ color: "var(--text-primary)" }}>
+          ${totalValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+        </p>
+        <p className="text-xs font-mono mt-0.5" style={{ color: totalPnl >= 0 ? "var(--green)" : "var(--red)" }}>
+          {totalPnl >= 0 ? "+" : ""}{totalPnl.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USDT
+        </p>
+      </div>
     </div>
   );
 }

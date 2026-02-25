@@ -169,27 +169,39 @@ function BotCard({ bot, onSubscribe, onUnsubscribe }: {
       )}
 
       {/* Stats grid 2x2 */}
-      <div className="grid grid-cols-2 gap-3 py-3 px-3 rounded-lg"
-        style={{ background: "var(--bg-base)" }}>
-        <StatBox
-          label="월 수익률"
-          value={`${p.monthly_return_pct >= 0 ? "+" : ""}${p.monthly_return_pct.toFixed(2)}%`}
-          color={p.monthly_return_pct >= 0 ? "var(--green)" : "var(--red)"}
-        />
-        <StatBox
-          label="최대 낙폭 (MDD)"
-          value={`${p.max_drawdown_pct.toFixed(2)}%`}
-          color="var(--red)"
-        />
-        <StatBox
-          label="샤프 비율"
-          value={p.sharpe_ratio.toFixed(2)}
-        />
-        <StatBox
-          label="승률"
-          value={`${p.win_rate.toFixed(1)}%`}
-          color={p.win_rate >= 50 ? "var(--green)" : "var(--red)"}
-        />
+      <div className="rounded-lg" style={{ background: "var(--bg-base)" }}>
+        <div className="grid grid-cols-2 gap-3 py-3 px-3">
+          <StatBox
+            label="수익률"
+            value={`${p.monthly_return_pct >= 0 ? "+" : ""}${p.monthly_return_pct.toFixed(2)}%`}
+            color={p.monthly_return_pct >= 0 ? "var(--green)" : "var(--red)"}
+          />
+          <StatBox
+            label="최대 낙폭 (MDD)"
+            value={`${p.max_drawdown_pct.toFixed(2)}%`}
+            color="var(--red)"
+          />
+          <StatBox
+            label="샤프 비율"
+            value={p.sharpe_ratio.toFixed(2)}
+          />
+          <StatBox
+            label="승률"
+            value={`${p.win_rate.toFixed(1)}%`}
+            color={p.win_rate >= 50 ? "var(--green)" : "var(--red)"}
+          />
+        </div>
+        <div className="px-3 pb-2.5 flex items-center gap-1.5">
+          <span className="text-xs px-1.5 py-0.5 rounded"
+            style={{ background: "rgba(255,255,255,0.06)", color: "var(--text-secondary)" }}>
+            전일 데이터 기준
+          </span>
+          {p.calculated_at && (
+            <span className="text-xs" style={{ color: "var(--text-secondary)" }}>
+              {new Date(p.calculated_at).toLocaleDateString("ko-KR", { month: "2-digit", day: "2-digit" })} 집계
+            </span>
+          )}
+        </div>
       </div>
 
       {/* Footer info */}
