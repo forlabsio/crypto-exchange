@@ -10,6 +10,13 @@ class Settings(BaseSettings):
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440
     BINANCE_BASE_URL: str = "https://api.binance.com"
+    BINANCE_API_KEY: str = ""
+    BINANCE_API_SECRET: str = ""
+
+    # Polygon / MetaMask settings
+    POLYGON_RPC_URL: str = "https://polygon-rpc.com"
+    PLATFORM_DEPOSIT_ADDRESS: str = ""
+    POLYGON_USDT_CONTRACT: str = ""
 
     @field_validator('DATABASE_URL', mode='before')
     @classmethod

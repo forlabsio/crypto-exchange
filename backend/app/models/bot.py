@@ -35,9 +35,12 @@ class BotSubscription(Base):
     started_at = Column(DateTime(timezone=True), server_default=func.now())
     ended_at = Column(DateTime(timezone=True), nullable=True)
     allocated_usdt = Column(Numeric(18, 2), nullable=False, server_default="100")
+    next_renewal_at = Column(DateTime(timezone=True), nullable=True)  # NEW
+    fee_paid_usdt = Column(Numeric(18, 2), default=0)                 # NEW
 
     user = relationship("User", back_populates="bot_subscriptions")
     bot = relationship("Bot", back_populates="subscriptions")
+    fee_income = relationship("FeeIncome", back_populates="subscription")  # NEW
 
 class BotPerformance(Base):
     __tablename__ = "bot_performance"

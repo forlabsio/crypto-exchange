@@ -12,8 +12,10 @@ class User(Base):
     __tablename__ = "users"
 
     id = Column(Integer, primary_key=True)
-    email = Column(String, unique=True, nullable=False, index=True)
-    password_hash = Column(String, nullable=False)
+    email = Column(String, unique=True, nullable=True, index=True)   # nullable for MetaMask-only
+    password_hash = Column(String, nullable=True)                     # nullable for MetaMask-only
+    wallet_address = Column(String(42), unique=True, nullable=True, index=True)  # Polygon address
+    nonce = Column(String(64), nullable=True)                         # MetaMask login nonce
     role = Column(Enum(UserRole), default=UserRole.user)
     is_subscribed = Column(Boolean, default=False)
     subscription_expires_at = Column(DateTime(timezone=True), nullable=True)
@@ -23,3 +25,4 @@ class User(Base):
     orders = relationship("Order", back_populates="user")
     bot_subscriptions = relationship("BotSubscription", back_populates="user")
     notifications = relationship("Notification", back_populates="user")
+    deposits = relationship("DepositTransaction", back_populates="user")
