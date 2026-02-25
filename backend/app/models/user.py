@@ -16,6 +16,7 @@ class User(Base):
     password_hash = Column(String, nullable=True)                     # nullable for MetaMask-only
     wallet_address = Column(String(42), unique=True, nullable=True, index=True)  # Polygon address
     nonce = Column(String(64), nullable=True)                         # MetaMask login nonce
+    nonce_created_at = Column(DateTime(timezone=True), nullable=True)
     role = Column(Enum(UserRole), default=UserRole.user)
     is_subscribed = Column(Boolean, default=False)
     subscription_expires_at = Column(DateTime(timezone=True), nullable=True)
