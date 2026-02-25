@@ -38,7 +38,7 @@ interface MarketStore {
 }
 
 let ws: WebSocket | null = null;
-let lastOrderbookMs = 0; // throttle orderbook renders to max ~5/sec
+let lastOrderbookMs = 0; // throttle orderbook renders to prevent excessive re-renders
 
 export const useMarketStore = create<MarketStore>((set) => ({
   ticker: null,
@@ -77,9 +77,9 @@ export const useMarketStore = create<MarketStore>((set) => ({
         } else if (data.type === "ticker" && data.ticker?.last_price) {
           set({ ticker: data.ticker });
         } else if (data.type === "orderbook" && data.orderbook) {
-          // Throttle orderbook updates to max 5/sec (200ms) to reduce re-renders
+          // Throttle orderbook updates to max ~20/sec (50ms) for smooth real-time updates
           const now = Date.now();
-          if (now - lastOrderbookMs >= 200) {
+          if (now - lastOrderbookMs >= 50) {
             lastOrderbookMs = now;
             set({ orderbook: data.orderbook });
           }
