@@ -7,6 +7,8 @@ from app.database import AsyncSessionLocal
 from app.models.bot import Bot, BotSubscription, BotPerformance, BotStatus
 from app.models.order import Order, OrderStatus
 from app.models.notification import Notification
+from app.models.wallet import Wallet
+from app.models.deposit import FeeIncome
 from app.core.redis import get_redis
 from app.services.stats import calc_bot_stats
 
@@ -38,7 +40,7 @@ async def evict_bot(db: AsyncSession, bot_id: int, reason: str = "performance"):
     )
     for sub in subs:
         sub.is_active = False
-        sub.ended_at = datetime.utcnow()
+        sub.ended_at = datetime.now(timezone.utc)
         db.add(Notification(
             user_id=sub.user_id,
             type="bot_evicted",
@@ -47,7 +49,7 @@ async def evict_bot(db: AsyncSession, bot_id: int, reason: str = "performance"):
         ))
 
     bot.status = BotStatus.evicted
-    bot.evicted_at = datetime.utcnow()
+    bot.evicted_at = datetime.now(timezone.utc)
     await db.commit()
 
 async def monthly_evaluation():
@@ -137,7 +139,7 @@ async def daily_performance_update():
             perf.max_drawdown_pct = mean(mdds)
             perf.sharpe_ratio = mean(sharpes)
             perf.total_trades = total_trades
-            perf.calculated_at = datetime.utcnow()
+            perf.calculated_at = datetime.now(timezone.utc)
 
         await db.commit()
 
@@ -161,25 +163,23 @@ async def renewal_check():
             bot = await db.get(Bot, sub.bot_id)
             if not bot:
                 continue
-            monthly_fee = float(bot.monthly_fee or 0)
+            monthly_fee = Decimal(str(bot.monthly_fee or 0))
             if monthly_fee <= 0:
                 # Free bot — just extend
                 sub.next_renewal_at = now + timedelta(days=30)
                 continue
 
-            from app.models.wallet import Wallet
             wallet = await db.scalar(
                 select(Wallet).where(Wallet.user_id == sub.user_id, Wallet.asset == "USDT")
             )
-            balance = float(wallet.balance or 0) if wallet else 0.0
+            balance = Decimal(str(wallet.balance or 0)) if wallet else Decimal(0)
 
             if balance >= monthly_fee:
                 # Renew
-                wallet.balance -= monthly_fee
+                wallet.balance = Decimal(str(wallet.balance)) - monthly_fee
                 sub.next_renewal_at = now + timedelta(days=30)
-                sub.fee_paid_usdt = float(sub.fee_paid_usdt or 0) + monthly_fee
+                sub.fee_paid_usdt = Decimal(str(sub.fee_paid_usdt or 0)) + monthly_fee
                 period = now.strftime("%Y-%m")
-                from app.models.deposit import FeeIncome
                 db.add(FeeIncome(
                     user_id=sub.user_id, bot_id=sub.bot_id,
                     subscription_id=sub.id, amount_usdt=monthly_fee, period=period,
@@ -188,8 +188,8 @@ async def renewal_check():
             else:
                 # Cancel — return investment
                 if wallet and sub.allocated_usdt:
-                    wallet.locked_balance = max(0, float(wallet.locked_balance or 0) - float(sub.allocated_usdt))
-                    wallet.balance += float(sub.allocated_usdt)
+                    wallet.locked_balance = max(Decimal(0), Decimal(str(wallet.locked_balance or 0)) - Decimal(str(sub.allocated_usdt)))
+                    wallet.balance = Decimal(str(wallet.balance)) + Decimal(str(sub.allocated_usdt))
                 sub.is_active = False
                 sub.ended_at = now
                 print(f"[Renewal] sub {sub.id} cancelled (insufficient balance)")

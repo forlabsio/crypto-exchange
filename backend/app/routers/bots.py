@@ -220,33 +220,35 @@ async def subscribe_bot(
     if existing:
         raise HTTPException(409, "Already subscribed")
 
-    monthly_fee = float(bot.monthly_fee or 0)
-    allocated = body.allocated_usdt
+    monthly_fee = Decimal(str(bot.monthly_fee or 0))
+    allocated = Decimal(str(body.allocated_usdt))
 
-    # Get user's USDT wallet
+    # Get user's USDT wallet with row-level lock to prevent double-spend
     wallet = await db.scalar(
-        select(Wallet).where(Wallet.user_id == user.id, Wallet.asset == "USDT")
+        select(Wallet).where(Wallet.user_id == user.id, Wallet.asset == "USDT").with_for_update()
     )
-    balance = float(wallet.balance or 0) if wallet else 0.0
+    if wallet is None:
+        raise HTTPException(400, "USDT 지갑이 없습니다. 먼저 지갑을 생성해주세요.")
+    balance = Decimal(str(wallet.balance or 0))
 
     # Priority: subscription fee first, then investment
     required = monthly_fee + allocated
     if balance < required:
         raise HTTPException(
             400,
-            f"잔액 부족: {balance:.2f} USDT. 필요: {required:.2f} USDT "
-            f"(구독료 {monthly_fee:.2f} + 투자금 {allocated:.2f})"
+            f"잔액 부족: {float(balance):.2f} USDT. 필요: {float(required):.2f} USDT "
+            f"(구독료 {float(monthly_fee):.2f} + 투자금 {float(allocated):.2f})"
         )
 
     now = datetime.now(timezone.utc)
 
     # Deduct monthly fee immediately
     if monthly_fee > 0:
-        wallet.balance -= monthly_fee
+        wallet.balance = Decimal(str(wallet.balance or 0)) - monthly_fee
 
     # Lock investment amount
-    wallet.balance -= allocated
-    wallet.locked_balance = (wallet.locked_balance or 0) + allocated
+    wallet.balance = Decimal(str(wallet.balance or 0)) - allocated
+    wallet.locked_balance = Decimal(str(wallet.locked_balance or 0)) + allocated
 
     # Create subscription
     sub = BotSubscription(
@@ -335,8 +337,8 @@ async def unsubscribe_bot(
         select(Wallet).where(Wallet.user_id == user.id, Wallet.asset == "USDT")
     )
     if wallet and sub.allocated_usdt:
-        wallet.locked_balance = max(0, float(wallet.locked_balance or 0) - float(sub.allocated_usdt))
-        wallet.balance = float(wallet.balance or 0) + float(sub.allocated_usdt)
+        wallet.locked_balance = max(Decimal(0), Decimal(str(wallet.locked_balance or 0)) - Decimal(str(sub.allocated_usdt)))
+        wallet.balance = Decimal(str(wallet.balance or 0)) + Decimal(str(sub.allocated_usdt))
 
     sub.is_active = False
     sub.ended_at = datetime.now(timezone.utc)
