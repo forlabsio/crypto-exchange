@@ -1,9 +1,9 @@
 import json
-import os
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from app.config import settings
 from app.database import get_db
 from app.core.deps import get_current_user, require_admin
 from app.core.redis import get_redis
@@ -50,14 +50,11 @@ async def deposit(body: dict, user: User = Depends(require_admin), db: AsyncSess
     return {"message": "deposited"}
 
 
-PLATFORM_DEPOSIT_ADDRESS = os.environ.get("PLATFORM_DEPOSIT_ADDRESS", "")
-
-
 @router.get("/deposit/address")
 async def deposit_address(user: User = Depends(get_current_user)):
     """Return the platform's Polygon USDT deposit address."""
     return {
-        "address": PLATFORM_DEPOSIT_ADDRESS,
+        "address": settings.PLATFORM_DEPOSIT_ADDRESS,
         "network": "Polygon",
         "token": "USDT (USDT-PoS)",
         "contract": "0xc2132D05D31c914a87C6611C10748AEb04B58e8F",
@@ -73,12 +70,15 @@ async def verify_deposit(
 ):
     """Submit a TX hash to verify and credit a USDT deposit."""
     tx_hash = body.get("tx_hash", "").strip().lower()
-    if not tx_hash or not tx_hash.startswith("0x"):
-        raise HTTPException(400, "Invalid TX hash")
+    if not tx_hash or not tx_hash.startswith("0x") or len(tx_hash) != 66:
+        raise HTTPException(400, "Invalid TX hash (must be 66 hex characters)")
 
-    # Prevent duplicate submissions
+    # Prevent duplicate submissions — filter by user_id so users only see their own records
     existing = await db.scalar(
-        select(DepositTransaction).where(DepositTransaction.tx_hash == tx_hash)
+        select(DepositTransaction).where(
+            DepositTransaction.tx_hash == tx_hash,
+            DepositTransaction.user_id == user.id,
+        )
     )
     if existing:
         if existing.status == DepositStatus.confirmed:
