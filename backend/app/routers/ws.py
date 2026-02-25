@@ -70,7 +70,6 @@ async def market_ws(pair: str, ws: WebSocket):
         trades_raw   = await redis.get(f"market:{pair}:trades")
 
         orderbook = json.loads(ob_raw) if ob_raw else {"bids": [], "asks": []}
-        print(f"[WS] Sending snapshot for {pair} - orderbook bids: {len(orderbook.get('bids', []))}, asks: {len(orderbook.get('asks', []))}")
 
         await ws.send_json({
             "type":      "snapshot",

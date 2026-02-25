@@ -67,20 +67,17 @@ export const useMarketStore = create<MarketStore>((set) => ({
     currentPair = pair;
     const wsUrl = process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8000";
     const fullUrl = `${wsUrl}/ws/market/${pair}`;
-    console.log("[MarketStore] Connecting to WebSocket:", fullUrl, `(attempt ${reconnectAttempts + 1})`);
 
     const newWs = new WebSocket(fullUrl);
     ws = newWs;
 
     // Guard all handlers so stale WS events don't corrupt state after reconnect
     newWs.onopen = () => {
-      console.log("[MarketStore] ✅ WebSocket connected for pair:", pair);
       reconnectAttempts = 0; // reset on successful connection
       if (ws === newWs) set({ connected: true });
     };
 
-    newWs.onclose = (event) => {
-      console.log("[MarketStore] ❌ WebSocket closed:", event.code, event.reason);
+    newWs.onclose = () => {
       if (ws === newWs) {
         set({ connected: false });
         // Auto-reconnect with exponential backoff
@@ -88,8 +85,7 @@ export const useMarketStore = create<MarketStore>((set) => ({
       }
     };
 
-    newWs.onerror = (error) => {
-      console.error("[MarketStore] ⚠️ WebSocket error:", error);
+    newWs.onerror = () => {
       if (ws === newWs) {
         set({ connected: false });
       }
@@ -102,11 +98,9 @@ export const useMarketStore = create<MarketStore>((set) => ({
       reconnectAttempts++;
       // Exponential backoff: 1s, 2s, 4s, 8s, 16s, max 30s
       const delay = Math.min(1000 * Math.pow(2, reconnectAttempts - 1), MAX_RECONNECT_DELAY);
-      console.log(`[MarketStore] Reconnecting in ${delay}ms... (attempt ${reconnectAttempts})`);
 
       reconnectTimer = setTimeout(() => {
         if (currentPair) {
-          console.log(`[MarketStore] Attempting reconnect for ${currentPair}...`);
           const store = useMarketStore.getState();
           store.connect(currentPair);
         }
@@ -116,10 +110,8 @@ export const useMarketStore = create<MarketStore>((set) => ({
       if (ws !== newWs) return; // ignore messages from replaced connections
       try {
         const data = JSON.parse(e.data);
-        console.log("[MarketStore] Received message type:", data.type);
 
         if (data.type === "snapshot") {
-          console.log("[MarketStore] Snapshot received - orderbook bids:", data.orderbook?.bids?.length, "asks:", data.orderbook?.asks?.length);
           lastOrderbookMs = Date.now();
           set({
             ticker: data.ticker && data.ticker.last_price ? data.ticker : null,
@@ -136,7 +128,6 @@ export const useMarketStore = create<MarketStore>((set) => ({
           const now = Date.now();
           if (now - lastOrderbookMs >= 50) {
             lastOrderbookMs = now;
-            console.log("[MarketStore] Orderbook update - bids:", data.orderbook.bids?.length, "asks:", data.orderbook.asks?.length);
             // Create new object and arrays to trigger React re-render
             set({
               orderbook: {
@@ -144,8 +135,6 @@ export const useMarketStore = create<MarketStore>((set) => ({
                 asks: [...data.orderbook.asks],
               }
             });
-          } else {
-            console.log("[MarketStore] Orderbook update throttled");
           }
         } else if (data.type === "trade" && data.trade) {
           set((state) => ({
@@ -161,7 +150,6 @@ export const useMarketStore = create<MarketStore>((set) => ({
   },
 
   disconnect: () => {
-    console.log("[MarketStore] Manually disconnecting WebSocket");
     currentPair = null; // signal that we don't want to auto-reconnect
     reconnectAttempts = 0;
 

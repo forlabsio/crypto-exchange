@@ -127,20 +127,16 @@ async def _ws_pair(pair: str, broadcast_cb: BroadcastCb):
     # Combined stream URL: wss://stream.binance.com:9443/stream?streams=s1/s2/s3
     # Each message is wrapped: {"stream": "...", "data": {...}}
     # Note: @100ms = 100ms update frequency (10 times per second)
-    streams = f"{symbol}@ticker/{symbol}@depth20@100ms/{symbol}@trade/{symbol}@kline_1h"
+    # Subscribe to all intervals: 1m, 5m, 15m, 30m, 1h, 4h, 1d, 1w
+    kline_streams = f"{symbol}@kline_1m/{symbol}@kline_5m/{symbol}@kline_15m/{symbol}@kline_30m/{symbol}@kline_1h/{symbol}@kline_4h/{symbol}@kline_1d/{symbol}@kline_1w"
+    streams = f"{symbol}@ticker/{symbol}@depth20@100ms/{symbol}@trade/{kline_streams}"
     url = f"wss://stream.binance.com:9443/stream?streams={streams}"
-    print(f"[Binance WS] Connecting to: {url}")
     redis = await get_redis()
 
     while True:
         try:
-            from datetime import datetime
-            conn_time = datetime.now().strftime("%H:%M:%S")
             async with websockets.connect(url, ping_interval=20, ping_timeout=20) as ws:
-                print(f"[{conn_time}] [Binance WS] ✅ CONNECTED {pair}")
-                msg_count = 0
                 async for raw in ws:
-                    msg_count += 1
                     msg = json.loads(raw)
                     stream = msg.get("stream", "")
 
@@ -163,18 +159,13 @@ async def _ws_pair(pair: str, broadcast_cb: BroadcastCb):
                         d = msg["data"]
                         bids = d.get("bids", [])
                         asks = d.get("asks", [])
-                        from datetime import datetime
-                        timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
-                        print(f"[{timestamp}] [Binance WS] {pair} DEPTH - bids: {len(bids)}, asks: {len(asks)}")
                         orderbook = {
                             "pair": pair,
                             "bids": bids,
                             "asks": asks,
                         }
                         await redis.set(f"market:{pair}:orderbook", json.dumps(orderbook), ex=10)
-                        print(f"[{timestamp}] [Binance WS] {pair} Broadcasting orderbook...")
                         await broadcast_cb(pair, {"type": "orderbook", "orderbook": orderbook})
-                        print(f"[{timestamp}] [Binance WS] {pair} Orderbook broadcast complete")
 
                     elif "@trade" in stream:
                         d = msg["data"]
@@ -214,11 +205,7 @@ async def _ws_pair(pair: str, broadcast_cb: BroadcastCb):
                         })
 
         except Exception as e:
-            from datetime import datetime
-            err_time = datetime.now().strftime("%H:%M:%S")
-            print(f"[{err_time}] [Binance WS] ❌ {pair} DISCONNECTED: {e}")
-            print(f"[{err_time}] [Binance WS] {pair} Total messages received: {msg_count}")
-            print(f"[{err_time}] [Binance WS] {pair} Reconnecting in 5s...")
+            print(f"[Binance WS] {pair} disconnected: {e}, reconnecting in 5s...")
             await asyncio.sleep(5)
 
 
