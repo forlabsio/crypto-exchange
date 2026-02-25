@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import time
 from decimal import Decimal
 from typing import Optional
@@ -12,18 +13,41 @@ from app.services.matching_engine import try_fill_order
 from app.services.indicators import calc_rsi, calc_ma, calc_bollinger
 from app.services.market_data import fetch_klines
 from app.services.binance_trade import place_market_order
+from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 async def _execute_real_trade(bot_name: str, bot_id: int, signal: str, total_usdt: float, pair: str):
     """Execute a real Binance market order aggregated across all subscribers."""
     symbol = pair.replace("_", "")  # BTC_USDT -> BTCUSDT
     try:
-        result = await place_market_order(symbol, signal.upper(), total_usdt, use_quote=True)
-        fill_price = float(result.get("fills", [{}])[0].get("price", 0)) if result.get("fills") else 0
-        print(f"[Binance] {bot_name} {signal.upper()} {symbol} USDT={total_usdt:.2f} fill={fill_price}")
+        if signal.lower() == "buy":
+            result = await place_market_order(symbol, "BUY", total_usdt, use_quote=True)
+        else:
+            # For SELL: we need coin quantity. Skip real SELL if we can't determine it safely.
+            # Log the skip for now — real SELL requires knowing the held coin position.
+            logger.info(
+                "[Binance] %s SELL signal for %s — skipping real order (coin qty unknown)",
+                bot_name, symbol,
+            )
+            return None
+        fills = result.get("fills", [])
+        if fills:
+            total_qty = sum(float(f.get("qty", 0)) for f in fills)
+            vwap = (
+                sum(float(f.get("price", 0)) * float(f.get("qty", 0)) for f in fills) / total_qty
+                if total_qty > 0 else 0
+            )
+        else:
+            vwap = 0
+        logger.info(
+            "[Binance] %s BUY %s USDT=%.2f vwap=%.4f",
+            bot_name, symbol, total_usdt, vwap,
+        )
         return result
     except Exception as e:
-        print(f"[Binance] Real trade error bot {bot_id}: {e}")
+        logger.error("[Binance] Real trade error bot %s: %s", bot_id, e)
         return None
 
 async def generate_signal(bot: Bot, pair: str) -> Optional[str]:
@@ -59,13 +83,16 @@ async def generate_signal(bot: Bot, pair: str) -> Optional[str]:
             elif rsi > overbought:
                 signal = "sell"
         except Exception as e:
-            print(f"RSI signal error bot {bot.id}: {e}")
+            logger.error("RSI signal error bot %s: %s", bot.id, e)
 
     elif strategy == "ma_cross":
         fast = int(config.get("fast_period", 5))
         slow = int(config.get("slow_period", 20))
         if fast >= slow:
-            print(f"MA cross bot {bot.id}: fast_period ({fast}) must be < slow_period ({slow}), skipping")
+            logger.warning(
+                "MA cross bot %s: fast_period (%s) must be < slow_period (%s), skipping",
+                bot.id, fast, slow,
+            )
             return None
         try:
             klines = await fetch_klines(pair, "1h", slow + 5)
@@ -81,7 +108,7 @@ async def generate_signal(bot: Bot, pair: str) -> Optional[str]:
             elif prev_fast >= prev_slow and fast_ma < slow_ma:
                 signal = "sell"  # death cross
         except Exception as e:
-            print(f"MA cross signal error bot {bot.id}: {e}")
+            logger.error("MA cross signal error bot %s: %s", bot.id, e)
 
     elif strategy == "boll":
         period = int(config.get("period", 20))
@@ -96,7 +123,7 @@ async def generate_signal(bot: Bot, pair: str) -> Optional[str]:
             elif current >= upper:
                 signal = "sell"
         except Exception as e:
-            print(f"Bollinger signal error bot {bot.id}: {e}")
+            logger.error("Bollinger signal error bot %s: %s", bot.id, e)
 
     # Only update the cooldown timer when a real signal was produced.
     # `alternating` always produces a signal; indicator strategies may return None on neutral markets.
@@ -195,7 +222,7 @@ async def run_bot(bot: Bot):
 
         # Execute one real Binance order sized to the total allocation across all subscribers
         total_investment = sum(float(s.allocated_usdt or 0) for s in sub_list)
-        if total_investment > 0:
+        if total_investment > 0 and settings.BINANCE_LIVE_TRADING:
             await _execute_real_trade(bot.name, bot.id, signal, total_investment, pair)
 
 async def bot_runner_loop():
@@ -212,6 +239,6 @@ async def bot_runner_loop():
             try:
                 await run_bot(bot)
             except Exception as e:
-                print(f"Bot runner error for bot {bot.id}: {e}")
+                logger.error("Bot runner error for bot %s: %s", bot.id, e)
 
         await asyncio.sleep(10)

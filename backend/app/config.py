@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     BINANCE_BASE_URL: str = "https://api.binance.com"
     BINANCE_API_KEY: str = ""
     BINANCE_API_SECRET: str = ""
+    BINANCE_LIVE_TRADING: bool = False
 
     # Polygon / MetaMask settings
     POLYGON_RPC_URL: str = "https://polygon-rpc.com"

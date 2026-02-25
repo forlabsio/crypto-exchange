@@ -2,11 +2,14 @@
 Binance REST API — real market order execution.
 Uses HMAC-SHA256 signed requests (no third-party library).
 """
+import logging
 import time
 import hmac
 import hashlib
 import httpx
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 def _sign(params: str) -> str:
@@ -33,12 +36,12 @@ async def place_market_order(
     if use_quote:
         params = (
             f"symbol={symbol}&side={side}&type=MARKET"
-            f"&quoteOrderQty={quote_qty:.2f}&timestamp={timestamp}"
+            f"&quoteOrderQty={quote_qty:.2f}&timestamp={timestamp}&recvWindow=10000"
         )
     else:
         params = (
             f"symbol={symbol}&side={side}&type=MARKET"
-            f"&quantity={quote_qty:.6f}&timestamp={timestamp}"
+            f"&quantity={quote_qty:.6f}&timestamp={timestamp}&recvWindow=10000"
         )
 
     signature = _sign(params)
@@ -59,7 +62,7 @@ async def get_account_balance(asset: str = "USDT") -> float:
         raise Exception("BINANCE_API_KEY / BINANCE_API_SECRET not configured")
 
     timestamp = int(time.time() * 1000)
-    params = f"timestamp={timestamp}"
+    params = f"timestamp={timestamp}&recvWindow=10000"
     signature = _sign(params)
     url = f"{settings.BINANCE_BASE_URL}/api/v3/account?{params}&signature={signature}"
 
