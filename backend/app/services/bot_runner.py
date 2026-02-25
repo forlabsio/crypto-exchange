@@ -11,6 +11,20 @@ from app.core.redis import get_redis
 from app.services.matching_engine import try_fill_order
 from app.services.indicators import calc_rsi, calc_ma, calc_bollinger
 from app.services.market_data import fetch_klines
+from app.services.binance_trade import place_market_order
+
+
+async def _execute_real_trade(bot_name: str, bot_id: int, signal: str, total_usdt: float, pair: str):
+    """Execute a real Binance market order aggregated across all subscribers."""
+    symbol = pair.replace("_", "")  # BTC_USDT -> BTCUSDT
+    try:
+        result = await place_market_order(symbol, signal.upper(), total_usdt, use_quote=True)
+        fill_price = float(result.get("fills", [{}])[0].get("price", 0)) if result.get("fills") else 0
+        print(f"[Binance] {bot_name} {signal.upper()} {symbol} USDT={total_usdt:.2f} fill={fill_price}")
+        return result
+    except Exception as e:
+        print(f"[Binance] Real trade error bot {bot_id}: {e}")
+        return None
 
 async def generate_signal(bot: Bot, pair: str) -> Optional[str]:
     redis = await get_redis()
@@ -178,6 +192,11 @@ async def run_bot(bot: Bot):
             db.add(order)
             await db.flush()
             await try_fill_order(db, order)
+
+        # Execute one real Binance order sized to the total allocation across all subscribers
+        total_investment = sum(float(s.allocated_usdt or 0) for s in sub_list)
+        if total_investment > 0:
+            await _execute_real_trade(bot.name, bot.id, signal, total_investment, pair)
 
 async def bot_runner_loop():
     while True:
