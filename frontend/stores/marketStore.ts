@@ -50,24 +50,32 @@ export const useMarketStore = create<MarketStore>((set) => ({
   connect: (pair: string) => {
     if (ws) ws.close();
     const wsUrl = process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8000";
-    const newWs = new WebSocket(`${wsUrl}/ws/market/${pair}`);
+    const fullUrl = `${wsUrl}/ws/market/${pair}`;
+    console.log("[MarketStore] Connecting to WebSocket:", fullUrl);
+    const newWs = new WebSocket(fullUrl);
     ws = newWs;
 
     // Guard all handlers so stale WS events don't corrupt state after reconnect
     newWs.onopen = () => {
+      console.log("[MarketStore] WebSocket connected for pair:", pair);
       if (ws === newWs) set({ connected: true });
     };
-    newWs.onclose = () => {
+    newWs.onclose = (event) => {
+      console.log("[MarketStore] WebSocket closed:", event.code, event.reason);
       if (ws === newWs) set({ connected: false });
     };
-    newWs.onerror = () => {
+    newWs.onerror = (error) => {
+      console.error("[MarketStore] WebSocket error:", error);
       if (ws === newWs) set({ connected: false });
     };
     newWs.onmessage = (e) => {
       if (ws !== newWs) return; // ignore messages from replaced connections
       try {
         const data = JSON.parse(e.data);
+        console.log("[MarketStore] Received message type:", data.type);
+
         if (data.type === "snapshot") {
+          console.log("[MarketStore] Snapshot received - orderbook bids:", data.orderbook?.bids?.length, "asks:", data.orderbook?.asks?.length);
           lastOrderbookMs = Date.now();
           set({
             ticker: data.ticker && data.ticker.last_price ? data.ticker : null,
@@ -81,7 +89,10 @@ export const useMarketStore = create<MarketStore>((set) => ({
           const now = Date.now();
           if (now - lastOrderbookMs >= 50) {
             lastOrderbookMs = now;
+            console.log("[MarketStore] Orderbook update - bids:", data.orderbook.bids?.length, "asks:", data.orderbook.asks?.length);
             set({ orderbook: data.orderbook });
+          } else {
+            console.log("[MarketStore] Orderbook update throttled");
           }
         } else if (data.type === "trade" && data.trade) {
           set((state) => ({
@@ -90,8 +101,8 @@ export const useMarketStore = create<MarketStore>((set) => ({
         } else if (data.type === "kline" && data.kline) {
           set({ latestKline: { interval: data.interval, kline: data.kline } });
         }
-      } catch {
-        // ignore parse errors
+      } catch (err) {
+        console.error("[MarketStore] Failed to parse message:", err);
       }
     };
   },
