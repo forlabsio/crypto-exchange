@@ -23,12 +23,24 @@ COINGECKO_BASE = "https://api.coingecko.com/api/v3"
 # Broadcast callback type: async (pair, payload_dict) -> None
 BroadcastCb = Callable[[str, dict], Awaitable[None]]
 
+# In-memory cache to reduce API calls
+_ticker_cache: dict = {}
+_klines_cache: dict = {}
+_cache_duration = 60  # seconds
+
 # ──────────────────────────────────────────────
 # REST helpers (used for klines and initial load)
 # ──────────────────────────────────────────────
 
 async def fetch_ticker(pair: str) -> dict:
     """Fetch current price and 24h stats from CoinGecko"""
+    # Check cache first
+    if pair in _ticker_cache:
+        cached_data, cached_time = _ticker_cache[pair]
+        if (datetime.now().timestamp() - cached_time) < _cache_duration:
+            print(f"[CoinGecko] Using cached ticker for {pair}")
+            return cached_data
+
     coin_id = COINGECKO_MAP.get(pair)
     if not coin_id:
         print(f"[ERROR] Unknown pair: {pair}")
@@ -58,7 +70,7 @@ async def fetch_ticker(pair: str) -> dict:
         low_24h = market_data.get("low_24h", {}).get("usd", 0)
         volume_24h = market_data.get("total_volume", {}).get("usd", 0)
 
-        return {
+        result = {
             "pair": pair,
             "last_price": str(current_price),
             "change_pct": str(price_change_24h),
@@ -67,8 +79,17 @@ async def fetch_ticker(pair: str) -> dict:
             "volume": str(volume_24h),
             "quote_volume": str(volume_24h),
         }
+
+        # Update cache
+        _ticker_cache[pair] = (result, datetime.now().timestamp())
+        return result
     except Exception as e:
         print(f"[ERROR] fetch_ticker {pair}: {e}")
+        # Return cached data if available, even if expired
+        if pair in _ticker_cache:
+            cached_data, _ = _ticker_cache[pair]
+            print(f"[CoinGecko] Returning stale cache for {pair}")
+            return cached_data
         return {}
 
 async def fetch_klines(pair: str, interval: str = "1m", limit: int = 500) -> list:
@@ -76,6 +97,14 @@ async def fetch_klines(pair: str, interval: str = "1m", limit: int = 500) -> lis
     Fetch OHLC data from CoinGecko
     Note: CoinGecko only provides daily data, so we'll return what we can
     """
+    # Check cache first
+    cache_key = f"{pair}:{interval}:{limit}"
+    if cache_key in _klines_cache:
+        cached_data, cached_time = _klines_cache[cache_key]
+        if (datetime.now().timestamp() - cached_time) < _cache_duration:
+            print(f"[CoinGecko] Using cached klines for {pair}")
+            return cached_data
+
     coin_id = COINGECKO_MAP.get(pair)
     if not coin_id:
         print(f"[ERROR] Unknown pair: {pair}")
@@ -121,9 +150,16 @@ async def fetch_klines(pair: str, interval: str = "1m", limit: int = 500) -> lis
                 "volume": 1000000.0,  # Placeholder
             })
 
+        # Update cache
+        _klines_cache[cache_key] = (klines, datetime.now().timestamp())
         return klines
     except Exception as e:
         print(f"[ERROR] fetch_klines {pair}: {e}")
+        # Return cached data if available, even if expired
+        if cache_key in _klines_cache:
+            cached_data, _ = _klines_cache[cache_key]
+            print(f"[CoinGecko] Returning stale cache for {pair} klines")
+            return cached_data
         return []
 
 async def sync_market_to_redis(pair: str):

@@ -17,8 +17,8 @@ scheduler = AsyncIOScheduler()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await get_redis()
-    # Pass broadcast callback so Binance updates are pushed to browser clients instantly
-    asyncio.create_task(market_data_loop(SUPPORTED_PAIRS, broadcast_cb=_binance_broadcast_cb))
+    # Pass broadcast callback - poll every 60 seconds to avoid CoinGecko rate limits
+    asyncio.create_task(market_data_loop(SUPPORTED_PAIRS, broadcast_cb=_binance_broadcast_cb, interval_sec=60))
     asyncio.create_task(bot_runner_loop())
     scheduler.add_job(daily_drawdown_check, "cron", hour=0, minute=0)
     scheduler.add_job(monthly_evaluation, "cron", day="last", hour=23, minute=59)
