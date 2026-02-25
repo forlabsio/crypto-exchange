@@ -134,9 +134,13 @@ async def _ws_pair(pair: str, broadcast_cb: BroadcastCb):
 
     while True:
         try:
+            from datetime import datetime
+            conn_time = datetime.now().strftime("%H:%M:%S")
             async with websockets.connect(url, ping_interval=20, ping_timeout=20) as ws:
-                print(f"[Binance WS] connected {pair}")
+                print(f"[{conn_time}] [Binance WS] ✅ CONNECTED {pair}")
+                msg_count = 0
                 async for raw in ws:
+                    msg_count += 1
                     msg = json.loads(raw)
                     stream = msg.get("stream", "")
 
@@ -159,14 +163,18 @@ async def _ws_pair(pair: str, broadcast_cb: BroadcastCb):
                         d = msg["data"]
                         bids = d.get("bids", [])
                         asks = d.get("asks", [])
-                        print(f"[Binance WS] {pair} depth update - bids: {len(bids)}, asks: {len(asks)}")
+                        from datetime import datetime
+                        timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+                        print(f"[{timestamp}] [Binance WS] {pair} DEPTH - bids: {len(bids)}, asks: {len(asks)}")
                         orderbook = {
                             "pair": pair,
                             "bids": bids,
                             "asks": asks,
                         }
                         await redis.set(f"market:{pair}:orderbook", json.dumps(orderbook), ex=10)
+                        print(f"[{timestamp}] [Binance WS] {pair} Broadcasting orderbook...")
                         await broadcast_cb(pair, {"type": "orderbook", "orderbook": orderbook})
+                        print(f"[{timestamp}] [Binance WS] {pair} Orderbook broadcast complete")
 
                     elif "@trade" in stream:
                         d = msg["data"]
@@ -206,7 +214,11 @@ async def _ws_pair(pair: str, broadcast_cb: BroadcastCb):
                         })
 
         except Exception as e:
-            print(f"[Binance WS] {pair} error: {e} — reconnecting in 5s")
+            from datetime import datetime
+            err_time = datetime.now().strftime("%H:%M:%S")
+            print(f"[{err_time}] [Binance WS] ❌ {pair} DISCONNECTED: {e}")
+            print(f"[{err_time}] [Binance WS] {pair} Total messages received: {msg_count}")
+            print(f"[{err_time}] [Binance WS] {pair} Reconnecting in 5s...")
             await asyncio.sleep(5)
 
 
