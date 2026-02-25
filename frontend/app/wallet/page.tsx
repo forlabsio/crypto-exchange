@@ -33,6 +33,9 @@ export default function WalletPage() {
   const [loading, setLoading] = useState(true);
   const { token, hydrate } = useAuthStore();
   const router = useRouter();
+  const [depositInfo, setDepositInfo] = useState<{address: string} | null>(null);
+  const [txHash, setTxHash] = useState("");
+  const [depositResult, setDepositResult] = useState("");
 
   useEffect(() => {
     hydrate();
@@ -49,6 +52,22 @@ export default function WalletPage() {
       .catch(() => router.push("/login"))
       .finally(() => setLoading(false));
   }, [token]);
+
+  useEffect(() => {
+    apiFetch("/api/wallet/deposit/address").then(setDepositInfo).catch(() => {});
+  }, []);
+
+  const handleVerifyDeposit = async () => {
+    try {
+      const res = await apiFetch("/api/wallet/deposit/verify", {
+        method: "POST",
+        body: JSON.stringify({ tx_hash: txHash }),
+      });
+      setDepositResult(`✓ ${res.amount_usdt} USDT 입금 완료`);
+    } catch (e: any) {
+      setDepositResult(`✗ ${e.message}`);
+    }
+  };
 
   const totalValueUsdt = wallets.reduce((sum, w) => sum + (w.value_usdt || 0), 0);
   const hasNonUsdt = wallets.some((w) => w.asset !== "USDT" && parseFloat(w.balance) > 0);
@@ -140,6 +159,23 @@ export default function WalletPage() {
               </div>
             );
           })}
+        </div>
+      )}
+
+      {depositInfo && (
+        <div className="p-4 rounded mt-6" style={{ background: "var(--bg-panel)", border: "1px solid var(--border)" }}>
+          <p className="text-xs mb-1" style={{ color: "var(--text-secondary)" }}>입금 주소 (Polygon USDT-PoS)</p>
+          <p className="font-mono text-xs break-all" style={{ color: "var(--text-primary)" }}>{depositInfo.address}</p>
+          <p className="text-xs mt-2" style={{ color: "var(--text-secondary)" }}>TX Hash 입금 확인:</p>
+          <div className="flex gap-2 mt-1">
+            <input value={txHash} onChange={e => setTxHash(e.target.value)}
+              placeholder="0x..." className="flex-1 px-2 py-1 rounded text-xs outline-none"
+              style={{ background: "var(--bg-secondary)", border: "1px solid var(--border)", color: "var(--text-primary)" }} />
+            <button type="button" onClick={handleVerifyDeposit} className="px-3 py-1 rounded text-xs text-white" style={{ background: "var(--blue)" }}>
+              확인
+            </button>
+          </div>
+          {depositResult && <p className="text-xs mt-1" style={{ color: depositResult.startsWith("✓") ? "var(--green)" : "var(--red)" }}>{depositResult}</p>}
         </div>
       )}
 

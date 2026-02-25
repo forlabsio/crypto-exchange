@@ -1,5 +1,7 @@
 import json
-from fastapi import APIRouter, Depends
+import os
+from datetime import datetime, timezone
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.database import get_db
@@ -7,6 +9,8 @@ from app.core.deps import get_current_user, require_admin
 from app.core.redis import get_redis
 from app.models.user import User
 from app.models.wallet import Wallet
+from app.models.deposit import DepositTransaction, DepositStatus
+from app.services.polygon import verify_usdt_deposit
 
 router = APIRouter(prefix="/api/wallet", tags=["wallet"])
 
@@ -44,3 +48,100 @@ async def deposit(body: dict, user: User = Depends(require_admin), db: AsyncSess
         db.add(Wallet(user_id=target_user_id, asset=asset, balance=amount))
     await db.commit()
     return {"message": "deposited"}
+
+
+PLATFORM_DEPOSIT_ADDRESS = os.environ.get("PLATFORM_DEPOSIT_ADDRESS", "")
+
+
+@router.get("/deposit/address")
+async def deposit_address(user: User = Depends(get_current_user)):
+    """Return the platform's Polygon USDT deposit address."""
+    return {
+        "address": PLATFORM_DEPOSIT_ADDRESS,
+        "network": "Polygon",
+        "token": "USDT (USDT-PoS)",
+        "contract": "0xc2132D05D31c914a87C6611C10748AEb04B58e8F",
+        "min_confirmations": 6,
+    }
+
+
+@router.post("/deposit/verify")
+async def verify_deposit(
+    body: dict,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Submit a TX hash to verify and credit a USDT deposit."""
+    tx_hash = body.get("tx_hash", "").strip().lower()
+    if not tx_hash or not tx_hash.startswith("0x"):
+        raise HTTPException(400, "Invalid TX hash")
+
+    # Prevent duplicate submissions
+    existing = await db.scalar(
+        select(DepositTransaction).where(DepositTransaction.tx_hash == tx_hash)
+    )
+    if existing:
+        if existing.status == DepositStatus.confirmed:
+            raise HTTPException(409, "This transaction has already been credited")
+        raise HTTPException(409, "This transaction is already being processed")
+
+    # Create pending record
+    deposit = DepositTransaction(
+        user_id=user.id,
+        tx_hash=tx_hash,
+        amount_usdt=0,
+        from_address="",
+        status=DepositStatus.pending,
+    )
+    db.add(deposit)
+    await db.flush()
+
+    # Verify on-chain
+    result = await verify_usdt_deposit(tx_hash)
+    if not result["valid"]:
+        deposit.status = DepositStatus.failed
+        await db.commit()
+        raise HTTPException(400, result["error"])
+
+    # Credit user's USDT wallet
+    wallet = await db.scalar(
+        select(Wallet).where(Wallet.user_id == user.id, Wallet.asset == "USDT")
+    )
+    if not wallet:
+        wallet = Wallet(user_id=user.id, asset="USDT", balance=0)
+        db.add(wallet)
+        await db.flush()
+
+    wallet.balance += result["amount_usdt"]
+    deposit.amount_usdt = result["amount_usdt"]
+    deposit.from_address = result["from_address"]
+    deposit.status = DepositStatus.confirmed
+    deposit.confirmed_at = datetime.now(timezone.utc)
+    await db.commit()
+
+    return {
+        "message": "입금이 확인됐습니다.",
+        "amount_usdt": float(result["amount_usdt"]),
+        "new_balance": float(wallet.balance),
+    }
+
+
+@router.get("/deposits")
+async def get_deposits(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """Return user's deposit history."""
+    deposits = list(await db.scalars(
+        select(DepositTransaction)
+        .where(DepositTransaction.user_id == user.id)
+        .order_by(DepositTransaction.created_at.desc())
+        .limit(20)
+    ))
+    return [
+        {
+            "tx_hash": d.tx_hash,
+            "amount_usdt": float(d.amount_usdt),
+            "status": d.status,
+            "confirmed_at": d.confirmed_at.isoformat() if d.confirmed_at else None,
+            "created_at": d.created_at.isoformat() if d.created_at else None,
+        }
+        for d in deposits
+    ]
