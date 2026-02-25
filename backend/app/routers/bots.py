@@ -1,4 +1,4 @@
-from datetime import datetime, date
+from datetime import datetime, date, timezone, timedelta
 from decimal import Decimal
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -10,6 +10,8 @@ from app.core.deps import get_current_user, get_optional_user
 from app.models.user import User
 from app.models.bot import Bot, BotSubscription, BotStatus, BotPerformance
 from app.models.order import Order, Trade
+from app.models.wallet import Wallet
+from app.models.deposit import FeeIncome
 from app.services.stats import calc_bot_stats
 
 
@@ -197,7 +199,7 @@ async def bot_trades(
     return result
 
 
-@router.post("/{bot_id}/subscribe")
+@router.post("/{bot_id}/subscribe", status_code=201)
 async def subscribe_bot(
     bot_id: int,
     body: SubscribeRequest = SubscribeRequest(),
@@ -206,7 +208,8 @@ async def subscribe_bot(
 ):
     bot = await db.get(Bot, bot_id)
     if not bot or bot.status != BotStatus.active:
-        raise HTTPException(404, "Bot not found")
+        raise HTTPException(404, "Bot not found or inactive")
+
     existing = await db.scalar(
         select(BotSubscription).where(
             BotSubscription.user_id == user.id,
@@ -215,10 +218,61 @@ async def subscribe_bot(
         )
     )
     if existing:
-        raise HTTPException(400, "Already subscribed")
-    db.add(BotSubscription(user_id=user.id, bot_id=bot_id, allocated_usdt=body.allocated_usdt))
+        raise HTTPException(409, "Already subscribed")
+
+    monthly_fee = float(bot.monthly_fee or 0)
+    allocated = body.allocated_usdt
+
+    # Get user's USDT wallet
+    wallet = await db.scalar(
+        select(Wallet).where(Wallet.user_id == user.id, Wallet.asset == "USDT")
+    )
+    balance = float(wallet.balance or 0) if wallet else 0.0
+
+    # Priority: subscription fee first, then investment
+    required = monthly_fee + allocated
+    if balance < required:
+        raise HTTPException(
+            400,
+            f"잔액 부족: {balance:.2f} USDT. 필요: {required:.2f} USDT "
+            f"(구독료 {monthly_fee:.2f} + 투자금 {allocated:.2f})"
+        )
+
+    now = datetime.now(timezone.utc)
+
+    # Deduct monthly fee immediately
+    if monthly_fee > 0:
+        wallet.balance -= monthly_fee
+
+    # Lock investment amount
+    wallet.balance -= allocated
+    wallet.locked_balance = (wallet.locked_balance or 0) + allocated
+
+    # Create subscription
+    sub = BotSubscription(
+        user_id=user.id,
+        bot_id=bot_id,
+        allocated_usdt=allocated,
+        next_renewal_at=now + timedelta(days=30),
+        fee_paid_usdt=monthly_fee,
+    )
+    db.add(sub)
+    await db.flush()
+
+    # Record fee income
+    if monthly_fee > 0:
+        period = now.strftime("%Y-%m")
+        fee_record = FeeIncome(
+            user_id=user.id,
+            bot_id=bot_id,
+            subscription_id=sub.id,
+            amount_usdt=monthly_fee,
+            period=period,
+        )
+        db.add(fee_record)
+
     await db.commit()
-    return {"message": "subscribed"}
+    return {"message": "구독이 완료됐습니다.", "next_renewal_at": sub.next_renewal_at.isoformat()}
 
 
 @router.delete("/{bot_id}/subscribe")
@@ -276,7 +330,15 @@ async def unsubscribe_bot(
             # try_fill_order commits the transaction; start fresh for sub update
             await db.refresh(sub)
 
+    # Return locked investment to available balance
+    wallet = await db.scalar(
+        select(Wallet).where(Wallet.user_id == user.id, Wallet.asset == "USDT")
+    )
+    if wallet and sub.allocated_usdt:
+        wallet.locked_balance = max(0, float(wallet.locked_balance or 0) - float(sub.allocated_usdt))
+        wallet.balance = float(wallet.balance or 0) + float(sub.allocated_usdt)
+
     sub.is_active = False
-    sub.ended_at = datetime.utcnow()
+    sub.ended_at = datetime.now(timezone.utc)
     await db.commit()
-    return {"message": "unsubscribed"}
+    return {"message": "구독이 해지됐습니다."}

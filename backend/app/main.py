@@ -9,7 +9,7 @@ from app.routers.ws import _binance_broadcast_cb
 from app.core.redis import get_redis
 from app.services.market_data import market_data_loop
 from app.services.bot_runner import bot_runner_loop
-from app.services.bot_eviction import daily_drawdown_check, monthly_evaluation, daily_performance_update
+from app.services.bot_eviction import daily_drawdown_check, monthly_evaluation, daily_performance_update, renewal_check
 
 SUPPORTED_PAIRS = [
     # Market Anchor
@@ -37,6 +37,7 @@ async def lifespan(app: FastAPI):
     scheduler.add_job(daily_drawdown_check, "cron", hour=0, minute=0)
     scheduler.add_job(daily_performance_update, "cron", hour=0, minute=5)
     scheduler.add_job(monthly_evaluation, "cron", day="last", hour=23, minute=59)
+    scheduler.add_job(renewal_check, "interval", hours=1)
     scheduler.start()
     yield
     scheduler.shutdown()

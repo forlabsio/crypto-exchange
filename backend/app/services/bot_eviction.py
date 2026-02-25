@@ -1,4 +1,4 @@
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
 from decimal import Decimal
 from statistics import mean
 from sqlalchemy import select
@@ -138,5 +138,60 @@ async def daily_performance_update():
             perf.sharpe_ratio = mean(sharpes)
             perf.total_trades = total_trades
             perf.calculated_at = datetime.utcnow()
+
+        await db.commit()
+
+
+async def renewal_check():
+    """
+    Run every hour. Find subscriptions where next_renewal_at <= now.
+    If user has enough balance: renew and extend 30 days.
+    If not: cancel subscription and return investment.
+    """
+    now = datetime.now(timezone.utc)
+    async with AsyncSessionLocal() as db:
+        subs = list(await db.scalars(
+            select(BotSubscription).where(
+                BotSubscription.is_active == True,
+                BotSubscription.next_renewal_at <= now,
+                BotSubscription.next_renewal_at.isnot(None),
+            )
+        ))
+        for sub in subs:
+            bot = await db.get(Bot, sub.bot_id)
+            if not bot:
+                continue
+            monthly_fee = float(bot.monthly_fee or 0)
+            if monthly_fee <= 0:
+                # Free bot — just extend
+                sub.next_renewal_at = now + timedelta(days=30)
+                continue
+
+            from app.models.wallet import Wallet
+            wallet = await db.scalar(
+                select(Wallet).where(Wallet.user_id == sub.user_id, Wallet.asset == "USDT")
+            )
+            balance = float(wallet.balance or 0) if wallet else 0.0
+
+            if balance >= monthly_fee:
+                # Renew
+                wallet.balance -= monthly_fee
+                sub.next_renewal_at = now + timedelta(days=30)
+                sub.fee_paid_usdt = float(sub.fee_paid_usdt or 0) + monthly_fee
+                period = now.strftime("%Y-%m")
+                from app.models.deposit import FeeIncome
+                db.add(FeeIncome(
+                    user_id=sub.user_id, bot_id=sub.bot_id,
+                    subscription_id=sub.id, amount_usdt=monthly_fee, period=period,
+                ))
+                print(f"[Renewal] sub {sub.id} renewed. Fee: {monthly_fee}")
+            else:
+                # Cancel — return investment
+                if wallet and sub.allocated_usdt:
+                    wallet.locked_balance = max(0, float(wallet.locked_balance or 0) - float(sub.allocated_usdt))
+                    wallet.balance += float(sub.allocated_usdt)
+                sub.is_active = False
+                sub.ended_at = now
+                print(f"[Renewal] sub {sub.id} cancelled (insufficient balance)")
 
         await db.commit()
