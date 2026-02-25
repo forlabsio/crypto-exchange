@@ -3,7 +3,7 @@ import { apiFetch } from "@/lib/api";
 
 interface User {
   id: number;
-  email: string;
+  email: string | null;
   role: string;
   is_subscribed: boolean;
   wallet_address?: string | null;
@@ -51,6 +51,9 @@ export const useAuthStore = create<AuthStore>((set) => ({
 
     // Request account
     const accounts: string[] = await win.ethereum.request({ method: "eth_requestAccounts" });
+    if (!accounts || accounts.length === 0) {
+      throw new Error("MetaMask 계정을 가져올 수 없습니다.");
+    }
     const address = accounts[0];
 
     // Get nonce from backend
@@ -72,11 +75,17 @@ export const useAuthStore = create<AuthStore>((set) => ({
     });
 
     const token = verifyRes.access_token;
+    // Temporarily set token in localStorage so apiFetch /me can use it
     localStorage.setItem("token", token);
-
-    // Fetch user info
-    const me = await apiFetch("/api/auth/me");
-    set({ token, user: me });
+    try {
+      // Fetch user info
+      const me = await apiFetch("/api/auth/me");
+      set({ token, user: me });
+    } catch (err) {
+      // If /me fails, clean up the token
+      localStorage.removeItem("token");
+      throw err;
+    }
   },
   register: async (email, password) => {
     await apiFetch("/api/auth/register", {
