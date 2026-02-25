@@ -11,6 +11,7 @@ Browser clients receive typed messages:
   { "type": "ticker",    "ticker": {...} }
   { "type": "orderbook", "orderbook": {...} }
   { "type": "trade",     "trade": {...} }
+  { "type": "kline",     "interval": "1h", "kline": {...} }  ← real-time candlestick
   { "type": "snapshot",  "ticker": {...}, "orderbook": {...}, "trades": [...] }  ← on connect
 """
 import json

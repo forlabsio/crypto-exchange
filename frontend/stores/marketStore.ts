@@ -17,10 +17,21 @@ interface Trade {
   is_buyer_maker: boolean;
 }
 
+interface Kline {
+  time: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+  is_closed: boolean;
+}
+
 interface MarketStore {
   ticker: Ticker | null;
   orderbook: { bids: string[][]; asks: string[][] };
   trades: Trade[];
+  latestKline: { interval: string; kline: Kline } | null;
   connected: boolean;
   connect: (pair: string) => void;
   disconnect: () => void;
@@ -33,6 +44,7 @@ export const useMarketStore = create<MarketStore>((set) => ({
   ticker: null,
   orderbook: { bids: [], asks: [] },
   trades: [],
+  latestKline: null,
   connected: false,
 
   connect: (pair: string) => {
@@ -75,6 +87,8 @@ export const useMarketStore = create<MarketStore>((set) => ({
           set((state) => ({
             trades: [data.trade, ...state.trades].slice(0, 50),
           }));
+        } else if (data.type === "kline" && data.kline) {
+          set({ latestKline: { interval: data.interval, kline: data.kline } });
         }
       } catch {
         // ignore parse errors
@@ -87,6 +101,6 @@ export const useMarketStore = create<MarketStore>((set) => ({
       ws.close();
       ws = null;
     }
-    set({ connected: false });
+    set({ connected: false, latestKline: null });
   },
 }));

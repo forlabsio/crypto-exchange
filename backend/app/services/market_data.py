@@ -115,9 +115,10 @@ async def sync_market_to_redis(pair: str):
 async def _ws_pair(pair: str, broadcast_cb: BroadcastCb):
     """
     Connect to Binance combined stream for one pair:
-      <symbol>@ticker  – 24h stats (price, change, volume …)
-      <symbol>@depth20 – order book top-20
-      <symbol>@trade   – individual trades
+      <symbol>@ticker   – 24h stats (price, change, volume …)
+      <symbol>@depth20  – order book top-20
+      <symbol>@trade    – individual trades
+      <symbol>@kline_1h – 1-hour candlestick updates (real-time)
     Auto-reconnects on disconnect.
     """
     import websockets  # type: ignore
@@ -125,7 +126,7 @@ async def _ws_pair(pair: str, broadcast_cb: BroadcastCb):
     symbol = _pair_to_symbol(pair).lower()
     # Combined stream URL: wss://stream.binance.com:9443/stream?streams=s1/s2/s3
     # Each message is wrapped: {"stream": "...", "data": {...}}
-    streams = f"{symbol}@ticker/{symbol}@depth20@100ms/{symbol}@trade"
+    streams = f"{symbol}@ticker/{symbol}@depth20@100ms/{symbol}@trade/{symbol}@kline_1h"
     url = f"wss://stream.binance.com:9443/stream?streams={streams}"
     redis = await get_redis()
 
@@ -179,6 +180,25 @@ async def _ws_pair(pair: str, broadcast_cb: BroadcastCb):
                         await redis.set(trades_key, json.dumps(trades), ex=60)
                         # Push to connected clients
                         await broadcast_cb(pair, {"type": "trade", "trade": trade})
+
+                    elif "@kline" in stream:
+                        d = msg["data"]
+                        k = d["k"]
+                        kline = {
+                            "time": int(k["t"] // 1000),  # ms to seconds
+                            "open": float(k["o"]),
+                            "high": float(k["h"]),
+                            "low": float(k["l"]),
+                            "close": float(k["c"]),
+                            "volume": float(k["v"]),
+                            "is_closed": k["x"],  # Is this kline closed?
+                        }
+                        # Broadcast real-time kline updates (including in-progress candles)
+                        await broadcast_cb(pair, {
+                            "type": "kline",
+                            "interval": k["i"],
+                            "kline": kline
+                        })
 
         except Exception as e:
             print(f"[Binance WS] {pair} error: {e} — reconnecting in 5s")
