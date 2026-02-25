@@ -127,18 +127,23 @@ async def _ws_pair(pair: str, broadcast_cb: BroadcastCb):
     # Combined stream URL: wss://stream.binance.com:9443/stream?streams=s1/s2/s3
     # Each message is wrapped: {"stream": "...", "data": {...}}
     # Note: @100ms = 100ms update frequency (10 times per second)
-    # Subscribe to all intervals: 1m, 5m, 15m, 30m, 1h, 4h, 1d, 1w
-    kline_streams = f"{symbol}@kline_1m/{symbol}@kline_5m/{symbol}@kline_15m/{symbol}@kline_30m/{symbol}@kline_1h/{symbol}@kline_4h/{symbol}@kline_1d/{symbol}@kline_1w"
-    streams = f"{symbol}@ticker/{symbol}@depth20@100ms/{symbol}@trade/{kline_streams}"
+    # Only subscribe to essential streams to avoid overload
+    streams = f"{symbol}@ticker/{symbol}@depth20@100ms/{symbol}@trade/{symbol}@kline_1m"
     url = f"wss://stream.binance.com:9443/stream?streams={streams}"
     redis = await get_redis()
 
     while True:
         try:
+            print(f"[Binance] Connecting to {url[:100]}...")
             async with websockets.connect(url, ping_interval=20, ping_timeout=20) as ws:
+                print(f"[Binance] ✅ Connected for {pair}")
+                msg_count = 0
                 async for raw in ws:
                     msg = json.loads(raw)
                     stream = msg.get("stream", "")
+                    msg_count += 1
+                    if msg_count % 100 == 0:
+                        print(f"[Binance] {pair} received {msg_count} messages")
 
                     if "@ticker" in stream:
                         d = msg["data"]
