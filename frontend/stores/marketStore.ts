@@ -79,7 +79,10 @@ export const useMarketStore = create<MarketStore>((set) => ({
           lastOrderbookMs = Date.now();
           set({
             ticker: data.ticker && data.ticker.last_price ? data.ticker : null,
-            orderbook: data.orderbook || { bids: [], asks: [] },
+            orderbook: {
+              bids: data.orderbook?.bids ? [...data.orderbook.bids] : [],
+              asks: data.orderbook?.asks ? [...data.orderbook.asks] : [],
+            },
             trades: data.trades || [],
           });
         } else if (data.type === "ticker" && data.ticker?.last_price) {
@@ -90,7 +93,13 @@ export const useMarketStore = create<MarketStore>((set) => ({
           if (now - lastOrderbookMs >= 50) {
             lastOrderbookMs = now;
             console.log("[MarketStore] Orderbook update - bids:", data.orderbook.bids?.length, "asks:", data.orderbook.asks?.length);
-            set({ orderbook: data.orderbook });
+            // Create new object and arrays to trigger React re-render
+            set({
+              orderbook: {
+                bids: [...data.orderbook.bids],
+                asks: [...data.orderbook.asks],
+              }
+            });
           } else {
             console.log("[MarketStore] Orderbook update throttled");
           }
