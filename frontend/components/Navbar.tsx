@@ -27,8 +27,7 @@ export default function Navbar() {
         <div className="flex items-center gap-6 text-sm" style={{ color: "var(--text-secondary)" }}>
           <Link href="/exchange/BTC_USDT" className="hover:text-white transition-colors">거래소</Link>
           <Link href="/futures/BTC_USDT" className="hover:text-white transition-colors">선물</Link>
-          <Link href="/otc" className="hover:text-white transition-colors">OTC</Link>
-          <Link href="/announcements" className="hover:text-white transition-colors">공지사항</Link>
+<Link href="/announcements" className="hover:text-white transition-colors">공지사항</Link>
           <Link href="/bot-market" className="hover:text-white transition-colors">봇 마켓</Link>
           {token && (
             <Link href="/my-bots" className="hover:text-white transition-colors">내 봇</Link>
