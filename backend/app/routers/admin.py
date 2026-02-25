@@ -118,3 +118,110 @@ async def toggle_subscription(
     user.is_subscribed = body.get("is_subscribed", False)
     await db.commit()
     return {"message": "subscription updated"}
+
+
+from app.models.deposit import FeeIncome
+from sqlalchemy import update as sql_update
+
+
+@router.get("/subscriptions")
+async def list_subscriptions(
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """List all active bot subscriptions with user info."""
+    subs = list(await db.scalars(
+        select(BotSubscription)
+        .where(BotSubscription.is_active == True)
+        .order_by(BotSubscription.started_at.desc())
+    ))
+    result = []
+    for s in subs:
+        user = await db.get(User, s.user_id)
+        bot = await db.get(Bot, s.bot_id)
+        result.append({
+            "id": s.id,
+            "user_id": s.user_id,
+            "user_email": user.email if user else None,
+            "user_wallet": user.wallet_address if user else None,
+            "bot_id": s.bot_id,
+            "bot_name": bot.name if bot else None,
+            "allocated_usdt": float(s.allocated_usdt),
+            "fee_paid_usdt": float(s.fee_paid_usdt or 0),
+            "started_at": s.started_at.isoformat() if s.started_at else None,
+            "next_renewal_at": s.next_renewal_at.isoformat() if s.next_renewal_at else None,
+        })
+    return result
+
+
+@router.get("/fee-income")
+async def fee_income_summary(
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Summary of fee income, split by settled/unsettled."""
+    all_fees = list(await db.scalars(select(FeeIncome).order_by(FeeIncome.charged_at.desc())))
+    unsettled = [f for f in all_fees if f.settled_at is None]
+    settled = [f for f in all_fees if f.settled_at is not None]
+
+    def to_dict(f):
+        return {
+            "id": f.id,
+            "user_id": f.user_id,
+            "bot_id": f.bot_id,
+            "amount_usdt": float(f.amount_usdt),
+            "period": f.period,
+            "charged_at": f.charged_at.isoformat() if f.charged_at else None,
+            "settled_at": f.settled_at.isoformat() if f.settled_at else None,
+        }
+
+    return {
+        "unsettled_total": sum(float(f.amount_usdt) for f in unsettled),
+        "unsettled": [to_dict(f) for f in unsettled],
+        "settled_total": sum(float(f.amount_usdt) for f in settled),
+        "settled": [to_dict(f) for f in settled[:50]],
+    }
+
+
+@router.post("/fee-income/settle")
+async def settle_fee_income(
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Mark all unsettled FeeIncome records as settled."""
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    result = await db.execute(
+        sql_update(FeeIncome)
+        .where(FeeIncome.settled_at.is_(None))
+        .values(settled_at=now)
+    )
+    await db.commit()
+    return {"message": f"{result.rowcount}건 정산 완료"}
+
+
+@router.delete("/subscriptions/{sub_id}")
+async def force_cancel_subscription(
+    sub_id: int,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Force-cancel a subscription and return investment to user."""
+    from datetime import datetime, timezone
+    from app.models.wallet import Wallet
+    sub = await db.get(BotSubscription, sub_id)
+    if not sub or not sub.is_active:
+        raise HTTPException(404, "Subscription not found or already inactive")
+
+    wallet = await db.scalar(
+        select(Wallet).where(Wallet.user_id == sub.user_id, Wallet.asset == "USDT")
+    )
+    if wallet and sub.allocated_usdt:
+        from decimal import Decimal
+        wallet.locked_balance = max(Decimal(0), Decimal(str(wallet.locked_balance or 0)) - Decimal(str(sub.allocated_usdt)))
+        wallet.balance = Decimal(str(wallet.balance or 0)) + Decimal(str(sub.allocated_usdt))
+
+    sub.is_active = False
+    sub.ended_at = datetime.now(timezone.utc)
+    await db.commit()
+    return {"message": "구독이 강제 해지됐습니다."}
