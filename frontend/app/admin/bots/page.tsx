@@ -43,6 +43,7 @@ interface FeeIncomeSummary {
   unsettled_total: number;
   unsettled: FeeIncomeItem[];
   settled_total: number;
+  settled_count: number;
   settled: FeeIncomeItem[];
 }
 
@@ -409,6 +410,7 @@ function SubscriptionsTab() {
   const [feeIncome, setFeeIncome] = useState<FeeIncomeSummary | null>(null);
   const [settling, setSettling] = useState(false);
   const [settleMsg, setSettleMsg] = useState("");
+  const [error, setError] = useState<string | null>(null);
 
   const loadData = async () => {
     try {
@@ -419,7 +421,7 @@ function SubscriptionsTab() {
       setSubs(subsData);
       setFeeIncome(feeData);
     } catch {
-      // silently handled
+      setError("데이터를 불러오지 못했습니다.");
     }
   };
 
@@ -481,6 +483,8 @@ function SubscriptionsTab() {
           {settling ? "처리 중..." : "정산 완료"}
         </button>
       </div>
+
+      {error && <p className="text-xs mb-4" style={{ color: "var(--red)" }}>{error}</p>}
 
       {/* Subscriptions table */}
       {subs.length === 0 ? (
@@ -557,7 +561,7 @@ function SubscriptionsTab() {
                 ${feeIncome.settled_total.toFixed(2)}
               </div>
               <div className="text-xs mt-1" style={{ color: "var(--text-secondary)" }}>
-                {feeIncome.settled.length}건
+                {feeIncome.settled_count}건
               </div>
             </div>
           </div>
@@ -597,8 +601,12 @@ export default function AdminBotsPage() {
 
   const handleDelete = async (bot: AdminBot) => {
     if (!confirm(`"${bot.name}" 봇을 퇴출하시겠습니까? 모든 구독자의 연동이 해제됩니다.`)) return;
-    await apiFetch(`/api/admin/bots/${bot.id}`, { method: "DELETE" });
-    loadBots();
+    try {
+      await apiFetch(`/api/admin/bots/${bot.id}`, { method: "DELETE" });
+      loadBots();
+    } catch (e: unknown) {
+      alert(`봇 삭제 실패: ${e instanceof Error ? e.message : String(e)}`);
+    }
   };
 
   if (!user || user.role !== "admin") {

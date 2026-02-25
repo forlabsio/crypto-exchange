@@ -1,11 +1,16 @@
-from datetime import datetime, date
+from datetime import datetime, date, timezone
+from decimal import Decimal
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
+from sqlalchemy import update as sql_update
+from sqlalchemy.orm import selectinload
 from app.database import get_db
 from app.core.deps import require_admin
 from app.models.user import User
 from app.models.bot import Bot, BotStatus, BotSubscription, BotPerformance
+from app.models.deposit import FeeIncome
+from app.models.wallet import Wallet
 from app.schemas.bot import CreateBotRequest, UpdateBotRequest
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
@@ -120,10 +125,6 @@ async def toggle_subscription(
     return {"message": "subscription updated"}
 
 
-from app.models.deposit import FeeIncome
-from sqlalchemy import update as sql_update
-
-
 @router.get("/subscriptions")
 async def list_subscriptions(
     admin: User = Depends(require_admin),
@@ -133,12 +134,13 @@ async def list_subscriptions(
     subs = list(await db.scalars(
         select(BotSubscription)
         .where(BotSubscription.is_active == True)
+        .options(selectinload(BotSubscription.user), selectinload(BotSubscription.bot))
         .order_by(BotSubscription.started_at.desc())
     ))
     result = []
     for s in subs:
-        user = await db.get(User, s.user_id)
-        bot = await db.get(Bot, s.bot_id)
+        user = s.user
+        bot = s.bot
         result.append({
             "id": s.id,
             "user_id": s.user_id,
@@ -179,6 +181,7 @@ async def fee_income_summary(
         "unsettled_total": sum(float(f.amount_usdt) for f in unsettled),
         "unsettled": [to_dict(f) for f in unsettled],
         "settled_total": sum(float(f.amount_usdt) for f in settled),
+        "settled_count": len(settled),
         "settled": [to_dict(f) for f in settled[:50]],
     }
 
@@ -189,7 +192,6 @@ async def settle_fee_income(
     db: AsyncSession = Depends(get_db),
 ):
     """Mark all unsettled FeeIncome records as settled."""
-    from datetime import datetime, timezone
     now = datetime.now(timezone.utc)
     result = await db.execute(
         sql_update(FeeIncome)
@@ -207,8 +209,6 @@ async def force_cancel_subscription(
     db: AsyncSession = Depends(get_db),
 ):
     """Force-cancel a subscription and return investment to user."""
-    from datetime import datetime, timezone
-    from app.models.wallet import Wallet
     sub = await db.get(BotSubscription, sub_id)
     if not sub or not sub.is_active:
         raise HTTPException(404, "Subscription not found or already inactive")
@@ -216,8 +216,9 @@ async def force_cancel_subscription(
     wallet = await db.scalar(
         select(Wallet).where(Wallet.user_id == sub.user_id, Wallet.asset == "USDT")
     )
-    if wallet and sub.allocated_usdt:
-        from decimal import Decimal
+    if sub.allocated_usdt and Decimal(str(sub.allocated_usdt)) > 0:
+        if wallet is None:
+            raise HTTPException(500, "User USDT wallet not found — cannot return funds safely")
         wallet.locked_balance = max(Decimal(0), Decimal(str(wallet.locked_balance or 0)) - Decimal(str(sub.allocated_usdt)))
         wallet.balance = Decimal(str(wallet.balance or 0)) + Decimal(str(sub.allocated_usdt))
 
