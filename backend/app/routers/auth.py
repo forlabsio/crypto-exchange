@@ -89,7 +89,13 @@ async def metamask_verify(body: MetaMaskVerifyRequest, db: AsyncSession = Depend
     if not user or not user.nonce:
         raise HTTPException(404, "Address not found — call /nonce first")
 
-    if user.nonce_created_at is None or datetime.now(timezone.utc) - user.nonce_created_at > timedelta(minutes=10):
+    nonce_created_at = user.nonce_created_at
+    if nonce_created_at is None:
+        raise HTTPException(400, "Nonce expired — call /nonce again")
+    # Make timezone-aware if naive (SQLite returns naive datetimes)
+    if nonce_created_at.tzinfo is None:
+        nonce_created_at = nonce_created_at.replace(tzinfo=timezone.utc)
+    if datetime.now(timezone.utc) - nonce_created_at > timedelta(minutes=10):
         raise HTTPException(400, "Nonce expired — call /nonce again")
 
     if not verify_signature(address, user.nonce, signature):
