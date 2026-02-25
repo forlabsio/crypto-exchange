@@ -68,13 +68,18 @@ async def market_ws(pair: str, ws: WebSocket):
         ticker_raw   = await redis.get(f"market:{pair}:ticker")
         ob_raw       = await redis.get(f"market:{pair}:orderbook")
         trades_raw   = await redis.get(f"market:{pair}:trades")
+
+        orderbook = json.loads(ob_raw) if ob_raw else {"bids": [], "asks": []}
+        print(f"[WS] Sending snapshot for {pair} - orderbook bids: {len(orderbook.get('bids', []))}, asks: {len(orderbook.get('asks', []))}")
+
         await ws.send_json({
             "type":      "snapshot",
             "ticker":    json.loads(ticker_raw)  if ticker_raw  else {},
-            "orderbook": json.loads(ob_raw)      if ob_raw      else {"bids": [], "asks": []},
+            "orderbook": orderbook,
             "trades":    json.loads(trades_raw)  if trades_raw  else [],
         })
-    except Exception:
+    except Exception as e:
+        print(f"[WS] Error sending snapshot for {pair}: {e}")
         return
 
     # Now add to broadcast list so real-time updates are pushed

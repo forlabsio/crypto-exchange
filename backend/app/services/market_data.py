@@ -155,10 +155,13 @@ async def _ws_pair(pair: str, broadcast_cb: BroadcastCb):
 
                     elif "@depth" in stream:
                         d = msg["data"]
+                        bids = d.get("bids", [])
+                        asks = d.get("asks", [])
+                        print(f"[Binance WS] {pair} depth update - bids: {len(bids)}, asks: {len(asks)}")
                         orderbook = {
                             "pair": pair,
-                            "bids": d.get("bids", []),
-                            "asks": d.get("asks", []),
+                            "bids": bids,
+                            "asks": asks,
                         }
                         await redis.set(f"market:{pair}:orderbook", json.dumps(orderbook), ex=10)
                         await broadcast_cb(pair, {"type": "orderbook", "orderbook": orderbook})
