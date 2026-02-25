@@ -65,7 +65,7 @@ async def _bot_dict(db: AsyncSession, bot: Bot, user: Optional[User] = None) -> 
 
     operation_days = 0
     if bot.created_at:
-        delta = datetime.utcnow() - bot.created_at.replace(tzinfo=None)
+        delta = datetime.now(timezone.utc) - bot.created_at.replace(tzinfo=None)
         operation_days = delta.days
 
     return {
