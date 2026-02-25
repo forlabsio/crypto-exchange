@@ -126,8 +126,8 @@ async def _ws_pair(pair: str, broadcast_cb: BroadcastCb):
     symbol = _pair_to_symbol(pair).lower()
     # Combined stream URL: wss://stream.binance.com:9443/stream?streams=s1/s2/s3
     # Each message is wrapped: {"stream": "...", "data": {...}}
-    # Note: depth20 = top 20 levels, @100ms = update frequency
-    streams = f"{symbol}@ticker/{symbol}@depth20/{symbol}@trade/{symbol}@kline_1h"
+    # Note: @100ms = 100ms update frequency (10 times per second)
+    streams = f"{symbol}@ticker/{symbol}@depth20@100ms/{symbol}@trade/{symbol}@kline_1h"
     url = f"wss://stream.binance.com:9443/stream?streams={streams}"
     print(f"[Binance WS] Connecting to: {url}")
     redis = await get_redis()
