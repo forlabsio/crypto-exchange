@@ -115,10 +115,9 @@ async def sync_market_to_redis(pair: str):
 async def _ws_pair(pair: str, broadcast_cb: BroadcastCb):
     """
     Connect to Binance combined stream for one pair:
-      <symbol>@ticker   – 24h stats (price, change, volume …)
-      <symbol>@depth20  – order book top-20
-      <symbol>@trade    – individual trades
-      <symbol>@kline_1h – 1-hour candlestick updates (real-time)
+      <symbol>@ticker  – 24h stats (price, change, volume …)
+      <symbol>@depth20 – order book top-20
+      <symbol>@trade   – individual trades
     Auto-reconnects on disconnect.
     """
     import websockets  # type: ignore
@@ -126,24 +125,17 @@ async def _ws_pair(pair: str, broadcast_cb: BroadcastCb):
     symbol = _pair_to_symbol(pair).lower()
     # Combined stream URL: wss://stream.binance.com:9443/stream?streams=s1/s2/s3
     # Each message is wrapped: {"stream": "...", "data": {...}}
-    # Note: @100ms = 100ms update frequency (10 times per second)
-    # Only subscribe to essential streams to avoid overload
-    streams = f"{symbol}@ticker/{symbol}@depth20@100ms/{symbol}@trade/{symbol}@kline_1m"
+    streams = f"{symbol}@ticker/{symbol}@depth20@100ms/{symbol}@trade"
     url = f"wss://stream.binance.com:9443/stream?streams={streams}"
     redis = await get_redis()
 
     while True:
         try:
-            print(f"[Binance] Connecting to {url[:100]}...")
             async with websockets.connect(url, ping_interval=20, ping_timeout=20) as ws:
-                print(f"[Binance] ✅ Connected for {pair}")
-                msg_count = 0
+                print(f"[Binance WS] connected {pair}")
                 async for raw in ws:
                     msg = json.loads(raw)
                     stream = msg.get("stream", "")
-                    msg_count += 1
-                    if msg_count % 100 == 0:
-                        print(f"[Binance] {pair} received {msg_count} messages")
 
                     if "@ticker" in stream:
                         d = msg["data"]
@@ -162,12 +154,10 @@ async def _ws_pair(pair: str, broadcast_cb: BroadcastCb):
 
                     elif "@depth" in stream:
                         d = msg["data"]
-                        bids = d.get("bids", [])
-                        asks = d.get("asks", [])
                         orderbook = {
                             "pair": pair,
-                            "bids": bids,
-                            "asks": asks,
+                            "bids": d.get("bids", []),
+                            "asks": d.get("asks", []),
                         }
                         await redis.set(f"market:{pair}:orderbook", json.dumps(orderbook), ex=10)
                         await broadcast_cb(pair, {"type": "orderbook", "orderbook": orderbook})
@@ -190,27 +180,8 @@ async def _ws_pair(pair: str, broadcast_cb: BroadcastCb):
                         # Push to connected clients
                         await broadcast_cb(pair, {"type": "trade", "trade": trade})
 
-                    elif "@kline" in stream:
-                        d = msg["data"]
-                        k = d["k"]
-                        kline = {
-                            "time": int(k["t"] // 1000),  # ms to seconds
-                            "open": float(k["o"]),
-                            "high": float(k["h"]),
-                            "low": float(k["l"]),
-                            "close": float(k["c"]),
-                            "volume": float(k["v"]),
-                            "is_closed": k["x"],  # Is this kline closed?
-                        }
-                        # Broadcast real-time kline updates (including in-progress candles)
-                        await broadcast_cb(pair, {
-                            "type": "kline",
-                            "interval": k["i"],
-                            "kline": kline
-                        })
-
         except Exception as e:
-            print(f"[Binance WS] {pair} disconnected: {e}, reconnecting in 5s...")
+            print(f"[Binance WS] {pair} error: {e} — reconnecting in 5s")
             await asyncio.sleep(5)
 
 

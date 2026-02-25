@@ -10,7 +10,6 @@ import {
   UTCTimestamp,
 } from "lightweight-charts";
 import { apiFetch } from "@/lib/api";
-import { useMarketStore } from "@/stores/marketStore";
 import styles from "./ChartWidget.module.css";
 import {
   KlinePoint,
@@ -43,9 +42,6 @@ export default function ChartWidget({ pair }: { pair: string }) {
 
   const [interval, setIntervalState] = useState("1h");
   const [activeIndicators, setActiveIndicators] = useState<Set<string>>(new Set());
-
-  // Import latestKline from marketStore for real-time updates
-  const { latestKline } = useMarketStore();
 
   const toggleIndicator = (name: string) => {
     setActiveIndicators((prev) => {
@@ -277,40 +273,6 @@ export default function ChartWidget({ pair }: { pair: string }) {
   useEffect(() => {
     syncIndicators(activeIndicators);
   }, [activeIndicators, syncIndicators]);
-
-  // Real-time kline updates via WebSocket (1h interval only)
-  useEffect(() => {
-    if (!latestKline || !candleSeriesRef.current) return;
-    if (latestKline.interval !== interval) return; // Only update matching interval
-
-    const k = latestKline.kline;
-    const newCandle = {
-      time: k.time as UTCTimestamp,
-      open: k.open,
-      high: k.high,
-      low: k.low,
-      close: k.close,
-    };
-
-    // Update existing candle or add new one
-    const data = klineDataRef.current;
-    const lastCandle = data[data.length - 1];
-
-    if (lastCandle && lastCandle.time === k.time) {
-      // Update existing candle (in-progress)
-      lastCandle.high = Math.max(lastCandle.high, k.high);
-      lastCandle.low = Math.min(lastCandle.low, k.low);
-      lastCandle.close = k.close;
-      lastCandle.volume = k.volume;
-      candleSeriesRef.current.update(newCandle);
-    } else if (k.time > (lastCandle?.time || 0)) {
-      // New candle (completed previous one)
-      const newKline = { ...k, time: k.time };
-      data.push(newKline);
-      klineDataRef.current = data;
-      candleSeriesRef.current.update(newCandle);
-    }
-  }, [latestKline, interval]);
 
   return (
     <div className="flex flex-col h-full">
