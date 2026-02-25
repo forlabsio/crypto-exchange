@@ -1,8 +1,10 @@
 import json
-from datetime import datetime, timezone
+import re
+from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from app.config import settings
 from app.database import get_db
 from app.core.deps import get_current_user, require_admin
@@ -57,7 +59,7 @@ async def deposit_address(user: User = Depends(get_current_user)):
         "address": settings.PLATFORM_DEPOSIT_ADDRESS,
         "network": "Polygon",
         "token": "USDT (USDT-PoS)",
-        "contract": "0xc2132D05D31c914a87C6611C10748AEb04B58e8F",
+        "contract": settings.POLYGON_USDT_CONTRACT,
         "min_confirmations": 6,
     }
 
@@ -70,8 +72,8 @@ async def verify_deposit(
 ):
     """Submit a TX hash to verify and credit a USDT deposit."""
     tx_hash = body.get("tx_hash", "").strip().lower()
-    if not tx_hash or not tx_hash.startswith("0x") or len(tx_hash) != 66:
-        raise HTTPException(400, "Invalid TX hash (must be 66 hex characters)")
+    if not re.fullmatch(r"0x[0-9a-fA-F]{64}", tx_hash):
+        raise HTTPException(400, "Invalid TX hash (must be 0x followed by 64 hex characters)")
 
     # Prevent duplicate submissions — filter by user_id so users only see their own records
     existing = await db.scalar(
@@ -81,13 +83,18 @@ async def verify_deposit(
         )
     )
     if existing:
-        if existing.status == DepositStatus.confirmed:
-            raise HTTPException(409, "This transaction has already been credited")
         if existing.status == DepositStatus.pending:
-            raise HTTPException(409, "This transaction is already being processed")
-        # If failed, allow retry — delete old record and proceed
-        await db.delete(existing)
-        await db.flush()
+            age = datetime.now(timezone.utc) - existing.created_at.replace(tzinfo=timezone.utc)
+            if age < timedelta(minutes=5):
+                raise HTTPException(409, "This transaction is already being processed")
+            await db.delete(existing)
+            await db.flush()
+        elif existing.status == DepositStatus.confirmed:
+            raise HTTPException(409, "This transaction has already been processed")
+        else:
+            # failed: allow retry — delete old record and proceed
+            await db.delete(existing)
+            await db.flush()
 
     # Create pending record
     deposit = DepositTransaction(
@@ -97,8 +104,12 @@ async def verify_deposit(
         from_address="",
         status=DepositStatus.pending,
     )
-    db.add(deposit)
-    await db.flush()
+    try:
+        db.add(deposit)
+        await db.flush()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(409, "This transaction has already been submitted")
 
     # Verify on-chain
     result = await verify_usdt_deposit(tx_hash)

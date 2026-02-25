@@ -41,16 +41,24 @@ export default function WalletPage() {
     hydrate();
   }, []);
 
+  const fetchWallet = async () => {
+    try {
+      const data = await apiFetch("/api/wallet");
+      setWallets(data);
+    } catch {
+      router.push("/login");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
     if (token === null && !loading) {
       router.push("/login");
       return;
     }
     if (!token) return;
-    apiFetch("/api/wallet")
-      .then(setWallets)
-      .catch(() => router.push("/login"))
-      .finally(() => setLoading(false));
+    fetchWallet();
   }, [token]);
 
   useEffect(() => {
@@ -64,6 +72,7 @@ export default function WalletPage() {
         body: JSON.stringify({ tx_hash: txHash }),
       });
       setDepositResult(`✓ ${res.amount_usdt} USDT 입금 완료`);
+      await fetchWallet();
     } catch (e: any) {
       setDepositResult(`✗ ${e.message}`);
     }
