@@ -26,3 +26,4 @@ class User(Base):
     bot_subscriptions = relationship("BotSubscription", back_populates="user")
     notifications = relationship("Notification", back_populates="user")
     deposits = relationship("DepositTransaction", back_populates="user")
+    fee_income = relationship("FeeIncome", back_populates="user", foreign_keys="[FeeIncome.user_id]")

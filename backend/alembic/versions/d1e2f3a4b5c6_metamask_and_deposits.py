@@ -1,6 +1,6 @@
 """metamask_and_deposits
 
-Revision ID: 98d13548e5da
+Revision ID: d1e2f3a4b5c6
 Revises: c3d4e5f6a7b8
 Create Date: 2026-02-25 13:25:12.745549
 
@@ -77,4 +77,5 @@ def downgrade() -> None:
     op.drop_table('fee_income')
     op.drop_index(op.f('ix_deposit_transactions_tx_hash'), table_name='deposit_transactions')
     op.drop_table('deposit_transactions')
+    sa.Enum(name='depositstatus').drop(op.get_bind(), checkfirst=True)
     # ### end Alembic commands ###

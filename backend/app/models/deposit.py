@@ -39,3 +39,4 @@ class FeeIncome(Base):
     settled_at = Column(DateTime(timezone=True), nullable=True)
 
     subscription = relationship("BotSubscription", back_populates="fee_income")
+    user = relationship("User", back_populates="fee_income", foreign_keys=[user_id])

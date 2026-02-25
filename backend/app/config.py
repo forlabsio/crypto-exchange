@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     # Polygon / MetaMask settings
     POLYGON_RPC_URL: str = "https://polygon-rpc.com"
     PLATFORM_DEPOSIT_ADDRESS: str = ""
-    POLYGON_USDT_CONTRACT: str = ""
+    POLYGON_USDT_CONTRACT: str = "0xc2132D05D31c914a87C6611C10748AEb04B58e8F"
 
     @field_validator('DATABASE_URL', mode='before')
     @classmethod
